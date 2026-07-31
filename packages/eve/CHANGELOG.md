@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.0
+
+### Patch Changes
+
+- f18c885: Keep interactive sessions resumable after model-call retries are exhausted.
+
 ## 0.27.11
 
 ### Patch Changes
