@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { SandboxSourceRef } from "#discover/manifest.js";
-import { normalizeSandboxDefinition } from "#internal/authored-definition/sandbox.js";
-import type { CompiledSandboxDefinition } from "#compiler/manifest.js";
+import { normalizeSandboxEntry } from "#internal/authored-definition/sandbox.js";
+import { DISABLED_COMPILED_SANDBOX_KIND, type CompiledSandboxEntry } from "#compiler/manifest.js";
 import {
   loadModuleBackedDefinition,
   type ModuleBackedDefinitionLoadOptions,
@@ -19,9 +19,9 @@ export async function compileSandboxDefinition(
   agentRoot: string,
   source: SandboxSourceRef,
   options: ModuleBackedDefinitionLoadOptions = {},
-): Promise<CompiledSandboxDefinition> {
+): Promise<CompiledSandboxEntry> {
   const message = `Expected the sandbox export "${source.exportName ?? "default"}" from "${source.logicalPath}" to match the public eve shape.`;
-  const normalized = normalizeSandboxDefinition(
+  const normalized = normalizeSandboxEntry(
     await loadModuleBackedDefinition({
       agentRoot,
       externalDependencies: options.externalDependencies,
@@ -30,18 +30,29 @@ export async function compileSandboxDefinition(
     }),
     message,
   );
+  if (normalized.kind === "disabled") {
+    return {
+      exportName: source.exportName,
+      kind: DISABLED_COMPILED_SANDBOX_KIND,
+      logicalPath: source.logicalPath,
+      sourceId: source.sourceId,
+      sourceKind: "module",
+    };
+  }
+
+  const definition = normalized.definition;
   const revalidationKey =
-    normalized.revalidationKey === undefined
+    definition.revalidationKey === undefined
       ? undefined
       : await resolveSandboxRevalidationKey({
           message,
-          revalidationKey: normalized.revalidationKey,
+          revalidationKey: definition.revalidationKey,
           source,
         });
 
   return {
-    backendName: resolveCompiledBackendName(normalized.backend),
-    description: normalized.description,
+    backendName: resolveCompiledBackendName(definition.backend),
+    description: definition.description,
     exportName: source.exportName,
     logicalPath: source.logicalPath,
     revalidationKey,

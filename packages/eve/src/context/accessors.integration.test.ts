@@ -122,6 +122,22 @@ describe("buildCallbackContext – getSandbox", () => {
     expect(sandbox.removedPaths).toEqual(["/workspace/note.txt"]);
     expect(sandbox.files.has("/workspace/note.txt")).toBe(false);
   });
+
+  it("reports an explicit disabled-sandbox error", async () => {
+    const runtime = createTestRuntime();
+
+    await expect(
+      runtime.runAsSession(
+        {
+          sandboxAccess: {
+            captureState: async () => ({ initialized: false, session: null }),
+            get: async () => null,
+          },
+        },
+        async () => await buildCallbackContext().getSandbox(),
+      ),
+    ).rejects.toThrow(/explicitly disabled sandbox access with disableSandbox/);
+  });
 });
 
 describe("buildCallbackContext – getSkill", () => {

@@ -1211,6 +1211,72 @@ describe("compileAgent", () => {
     });
   });
 
+  it("preserves an explicit disabled sandbox marker without bundling the sentinel module", async () => {
+    const app = await scenarioApp({
+      files: {
+        "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
+        "agent/instructions.md": "You are a precise assistant.\n",
+        "agent/sandbox.mjs": [
+          'import { disableSandbox } from "eve/sandbox";',
+          "export default disableSandbox();",
+          "",
+        ].join("\n"),
+        "agent/skills/review.md": "Review the response without reading supporting files.\n",
+      },
+      installDependencies: true,
+      name: "compile-disabled-sandbox",
+    });
+
+    const result = await compileAgent({ startPath: app.appRoot });
+    const moduleMapText = await readFile(result.paths.moduleMapPath, "utf8");
+
+    expect(result.manifest.sandbox).toEqual({
+      exportName: undefined,
+      kind: "eve:disabled-sandbox",
+      logicalPath: "sandbox.mjs",
+      sourceId: "sandbox.mjs",
+      sourceKind: "module",
+    });
+    expect(result.manifest.skills).toMatchObject([
+      {
+        logicalPath: "skills/review.md",
+        name: "review",
+        sourceKind: "markdown",
+      },
+    ]);
+    expect(moduleMapText).not.toContain("sandbox.mjs");
+  });
+
+  it("rejects workspace and Skill capabilities alongside an explicit disabled sandbox", async () => {
+    const app = await scenarioApp({
+      files: {
+        "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
+        "agent/instructions.md": "You are a precise assistant.\n",
+        "agent/sandbox/sandbox.mjs": [
+          'import { disableSandbox } from "eve/sandbox";',
+          "export default disableSandbox();",
+          "",
+        ].join("\n"),
+        "agent/sandbox/workspace/seed.txt": "seed",
+        "agent/skills/review/SKILL.md": [
+          "---",
+          "name: review",
+          "description: Review a response.",
+          "---",
+          "Review the response.",
+          "",
+        ].join("\n"),
+        "agent/skills/review/references/checklist.md": "Review checklist.\n",
+      },
+      installDependencies: true,
+      name: "compile-disabled-sandbox-conflicts",
+    });
+
+    await expect(compileAgent({ startPath: app.appRoot })).rejects.toThrow(
+      /compile-disabled-sandbox-conflicts.*disableSandbox.*sandbox workspace "sandbox\/workspace".*static skill package "skills\/review\/SKILL\.md"/s,
+    );
+  });
+
   it("rejects sandbox bootstrap revalidation keys that resolve to empty or non-string values", async () => {
     const emptyKeyApp = await createSandboxRevalidationKeyValidationApp({
       name: "empty",

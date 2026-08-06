@@ -1,4 +1,5 @@
 import { getAllFrameworkToolNames } from "#runtime/framework-tools/index.js";
+import { isDisabledCompiledSandboxEntry } from "#compiler/manifest.js";
 import {
   getAllFrameworkChannelNames,
   getFrameworkChannelDefinitions,
@@ -68,6 +69,7 @@ export function buildAgentInfoResponseFromManifest(
     authoredToolNames,
     delegationToolNames: getRootDelegationToolNames(manifest),
     disabledFrameworkToolNames: disabledFrameworkTools,
+    sandboxDisabled: manifest.sandbox !== null && isDisabledCompiledSandboxEntry(manifest.sandbox),
   });
   const renderedAuthoredChannels = authoredChannels.map((channel) => ({
     ...toSource(channel),
@@ -171,14 +173,20 @@ export function buildAgentInfoResponseFromManifest(
     sandbox:
       manifest.sandbox === null
         ? null
-        : {
-            ...toSource(manifest.sandbox),
-            description: manifest.sandbox.description,
-            hasBootstrap: false,
-            hasOnSession: false,
-            revalidationKey: manifest.sandbox.revalidationKey,
-            sourceHash: manifest.sandbox.sourceHash,
-          },
+        : isDisabledCompiledSandboxEntry(manifest.sandbox)
+          ? {
+              ...toSource(manifest.sandbox),
+              status: "disabled",
+            }
+          : {
+              ...toSource(manifest.sandbox),
+              description: manifest.sandbox.description,
+              hasBootstrap: false,
+              hasOnSession: false,
+              revalidationKey: manifest.sandbox.revalidationKey,
+              sourceHash: manifest.sandbox.sourceHash,
+              status: "configured",
+            },
     schedules: data.schedules.map(renderSchedule),
     skills: {
       static: manifest.skills.map((skill) => ({

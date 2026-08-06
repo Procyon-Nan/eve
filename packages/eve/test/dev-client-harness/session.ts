@@ -1,3 +1,4 @@
+import type { UserContent } from "ai";
 import type { HandleMessageRequestBody, HandleMessageStreamEvent } from "#protocol/message.js";
 import { countCurrentTurnBoundaryEvents, extractCurrentTurnBoundaryEvent } from "./stream.js";
 
@@ -48,7 +49,7 @@ export function createDevelopmentSessionState(
  * state.
  */
 export function createDevelopmentMessageRequest(input: {
-  readonly message: string;
+  readonly message: string | UserContent;
   readonly session: DevelopmentSessionState;
 }): HandleMessageRequestBody {
   if (input.session.continuationToken) {

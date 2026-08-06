@@ -39,6 +39,19 @@ const ALL_FRAMEWORK_TOOLS: readonly ResolvedToolDefinition[] = [
   AGENT_TOOL_DEFINITION,
 ];
 
+const SANDBOX_BACKED_FRAMEWORK_TOOL_NAMES: ReadonlySet<string> = new Set([
+  BASH_TOOL_DEFINITION.name,
+  GLOB_TOOL_DEFINITION.name,
+  GREP_TOOL_DEFINITION.name,
+  READ_FILE_TOOL_DEFINITION.name,
+  WRITE_FILE_TOOL_DEFINITION.name,
+]);
+
+/** Returns whether a framework tool requires a live sandbox session. */
+export function isSandboxBackedFrameworkToolName(name: string): boolean {
+  return SANDBOX_BACKED_FRAMEWORK_TOOL_NAMES.has(name);
+}
+
 /**
  * Returns framework-owned tool definitions registered in the tool registry
  * alongside authored tools during graph resolution.
@@ -49,11 +62,18 @@ const ALL_FRAMEWORK_TOOLS: readonly ResolvedToolDefinition[] = [
 export function getFrameworkToolDefinitions(config?: {
   readonly authoredSkills?: readonly ResolvedSkillDefinition[];
   readonly hasConnections?: boolean;
+  readonly sandboxEnabled?: boolean;
 }): readonly ResolvedToolDefinition[] {
   const authoredSkills = config?.authoredSkills;
-  if (authoredSkills === undefined) return REGISTERED_FRAMEWORK_TOOLS;
+  const definitions =
+    config?.sandboxEnabled === false
+      ? REGISTERED_FRAMEWORK_TOOLS.filter(
+          (definition) => !isSandboxBackedFrameworkToolName(definition.name),
+        )
+      : REGISTERED_FRAMEWORK_TOOLS;
+  if (authoredSkills === undefined) return definitions;
 
-  return REGISTERED_FRAMEWORK_TOOLS.map((definition) =>
+  return definitions.map((definition) =>
     definition.name === SKILL_TOOL_DEFINITION.name
       ? createSkillToolDefinition(authoredSkills)
       : definition,

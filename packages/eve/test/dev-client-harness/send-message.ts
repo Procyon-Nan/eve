@@ -1,3 +1,4 @@
+import type { UserContent } from "ai";
 import type { HandleMessageStreamEvent } from "#protocol/message.js";
 import { EVE_SESSION_ID_HEADER } from "#protocol/message.js";
 import {
@@ -134,7 +135,7 @@ async function readDevelopmentTurnEvents(input: {
  */
 export async function sendDevelopmentMessage(input: {
   headers?: DevelopmentRequestHeaders;
-  message: string;
+  message: string | UserContent;
   onEvent?(event: HandleMessageStreamEvent): void;
   onResponseStart?(response: { sessionId?: string }): void;
   signal?: AbortSignal;

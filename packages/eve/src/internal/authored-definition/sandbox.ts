@@ -5,13 +5,36 @@ import {
 } from "#internal/authored-module.js";
 import { lazyBackend } from "#execution/sandbox/lazy-backend.js";
 import type { SandboxBackend } from "#public/definitions/sandbox-backend.js";
-import type { SandboxDefinition, SandboxRevalidationKeyFn } from "#public/definitions/sandbox.js";
+import {
+  isDisabledSandboxSentinel,
+  type SandboxDefinition,
+  type SandboxRevalidationKeyFn,
+} from "#public/definitions/sandbox.js";
 
 type NormalizedSandboxDefinition = Readonly<Omit<SandboxDefinition, "backend">> & {
   readonly backend?: SandboxBackend;
   readonly description?: string;
   readonly revalidationKey?: SandboxRevalidationKeyFn;
 };
+
+export type NormalizedSandboxEntry =
+  | { readonly kind: "configured"; readonly definition: NormalizedSandboxDefinition }
+  | { readonly kind: "disabled" };
+
+/**
+ * Normalizes an authored sandbox module export while preserving the explicit
+ * distinction between a configured sandbox and {@link disableSandbox}.
+ */
+export function normalizeSandboxEntry(value: unknown, message: string): NormalizedSandboxEntry {
+  if (isDisabledSandboxSentinel(value)) {
+    return { kind: "disabled" };
+  }
+
+  return {
+    definition: normalizeSandboxDefinition(value, message),
+    kind: "configured",
+  };
+}
 
 /**
  * Normalizes one authored sandbox definition into the canonical internal

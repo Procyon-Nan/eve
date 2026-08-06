@@ -56,7 +56,7 @@ Behavior:
 
 ## `ctx.getSandbox()`
 
-`ctx.getSandbox()` returns a live handle for the current agent's sandbox.
+`ctx.getSandbox()` returns a live handle for the current agent's sandbox when that node uses the framework default or an authored definition.
 
 ```ts
 const sandbox = await ctx.getSandbox();
@@ -65,10 +65,11 @@ const result = await sandbox.run({ command: "npm test" });
 
 Behavior:
 
-- It takes no arguments. Each agent has exactly one sandbox.
+- It takes no arguments. Each agent gets a sandbox by default, but `disableSandbox()` can explicitly opt the current node out.
 - It is async because eve binds or restores sandbox state lazily.
 - It only works when sandbox access is attached to the active runtime path.
 - Visibility is node-local. A subagent sees its own sandbox, not the parent's.
+- When the current node exports `disableSandbox()`, it throws a stable error explaining that the sandbox is explicitly disabled.
 
 `SandboxSession` also exposes `resolvePath(path)`, which returns the live backend-native path for a logical `/workspace/...` location. Use it when authored code needs that path before passing it to shell code or a child process.
 
@@ -87,6 +88,7 @@ Behavior:
 
 - It is synchronous. File content is read lazily from the active sandbox.
 - It only works when sandbox access is attached to the active runtime path.
+- File access is unavailable when the current node exports `disableSandbox()`.
 - `identifier` is the path-derived skill id.
 - Visibility follows the current agent's sandbox.
 - A missing skill surfaces when a file accessor reads a missing sandbox path.

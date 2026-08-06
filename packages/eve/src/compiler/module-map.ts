@@ -5,7 +5,7 @@ import type {
   CompiledAgentNodeManifest,
   CompiledExtensionMount,
 } from "#compiler/manifest.js";
-import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
+import { isDisabledCompiledSandboxEntry, ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import { normalizeEsmImportSpecifier } from "#internal/application/import-specifier.js";
 
 /**
@@ -244,7 +244,7 @@ export function collectModuleRefsForManifest(
     });
   }
 
-  if (manifest.sandbox !== null) {
+  if (manifest.sandbox !== null && !isDisabledCompiledSandboxEntry(manifest.sandbox)) {
     moduleSourceRefs.set(manifest.sandbox.sourceId, {
       exportName: manifest.sandbox.exportName,
       sourceKind: "module",

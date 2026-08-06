@@ -56,4 +56,24 @@ describe("buildFrameworkToolInfo", () => {
       status: "replaced",
     });
   });
+
+  it("reports Sandbox-backed framework tools as unavailable when sandbox is disabled", () => {
+    const info = buildFrameworkToolInfo({
+      authoredToolNames: new Set(),
+      delegationToolNames: new Set(),
+      disabledFrameworkToolNames: new Set(),
+      sandboxDisabled: true,
+    });
+
+    expect(info.available.map((tool) => tool.name)).toContain("ask_question");
+    expect(info.available.map((tool) => tool.name)).not.toContain("bash");
+    expect(info.framework.find((tool) => tool.name === "bash")).toMatchObject({
+      disabledBySandbox: true,
+      status: "unavailable",
+    });
+    expect(info.framework.find((tool) => tool.name === "ask_question")).toMatchObject({
+      disabledBySandbox: false,
+      status: "active",
+    });
+  });
 });

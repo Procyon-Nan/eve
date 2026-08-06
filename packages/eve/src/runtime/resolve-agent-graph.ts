@@ -138,6 +138,7 @@ async function resolveRuntimeAgentNode(
   const frameworkTools = getFrameworkToolDefinitions({
     authoredSkills: agent.skills,
     hasConnections,
+    sandboxEnabled: agent.sandbox.kind !== "disabled",
   });
   const frameworkToolNames = new Set(frameworkTools.map((t) => t.name));
   const allFrameworkToolNames = getAllFrameworkToolNames();
@@ -211,7 +212,7 @@ async function resolveRuntimeAgentNode(
   ];
 
   const sandboxRegistry = createRuntimeSandboxRegistry({
-    authoredSandbox: agent.sandbox,
+    selection: agent.sandbox,
     workspaceResourceRoot: agent.workspaceResourceRoot,
   });
   const subagentRegistry = createRuntimeSubagentRegistry({

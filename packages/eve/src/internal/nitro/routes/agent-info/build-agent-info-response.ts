@@ -2,6 +2,7 @@ import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import {
   getAllFrameworkToolDefinitions,
   getAllFrameworkToolNames,
+  isSandboxBackedFrameworkToolName,
 } from "#runtime/framework-tools/index.js";
 import {
   getAllFrameworkChannelNames,
@@ -12,13 +13,13 @@ import type {
   AgentInfoData,
   CompiledAgentManifest,
   CompiledSubagentNode,
-  ResolvedSandboxDefinition,
   ResolvedScheduleDefinition,
   ResolvedSkillDefinition,
 } from "#internal/nitro/routes/agent-info/load-agent-info-data.js";
 import type {
   ResolvedAgent,
   ResolvedChannelDefinition,
+  ResolvedSandboxSelection,
   ResolvedToolDefinition,
 } from "#runtime/types.js";
 import { serializeInputSchema, serializeOutputSchema } from "#shared/tool-schema.js";
@@ -50,8 +51,9 @@ export interface AgentInfoToolEntry extends AgentInfoSource {
 
 export interface AgentInfoFrameworkToolEntry extends AgentInfoToolEntry {
   readonly disabledByAuthor: boolean;
+  readonly disabledBySandbox?: boolean;
   readonly replacedByAuthoredTool: boolean;
-  readonly status: "active" | "disabled" | "replaced";
+  readonly status: "active" | "disabled" | "replaced" | "unavailable";
 }
 
 export interface AgentInfoDynamicResolverEntry extends AgentInfoSource {
@@ -148,14 +150,21 @@ export interface AgentInfoHookEntry extends AgentInfoSource {
   readonly slug: string;
 }
 
-export interface AgentInfoSandboxEntry extends AgentInfoSource {
+export interface AgentInfoConfiguredSandboxEntry extends AgentInfoSource {
   readonly backendKind?: string;
   readonly description?: string;
   readonly hasBootstrap: boolean;
   readonly hasOnSession: boolean;
   readonly revalidationKey?: string;
   readonly sourceHash?: string;
+  readonly status: "configured";
 }
+
+export interface AgentInfoDisabledSandboxEntry extends AgentInfoSource {
+  readonly status: "disabled";
+}
+
+export type AgentInfoSandboxEntry = AgentInfoConfiguredSandboxEntry | AgentInfoDisabledSandboxEntry;
 
 export interface AgentInfoDiagnostics {
   readonly discoveryErrors: number;
@@ -368,6 +377,7 @@ function buildToolInfo(
     authoredToolNames,
     delegationToolNames,
     disabledFrameworkToolNames: disabledFrameworkTools,
+    sandboxDisabled: agent.sandbox.kind === "disabled",
   });
 
   return {
@@ -391,6 +401,7 @@ export function buildFrameworkToolInfo(input: {
   readonly authoredToolNames: ReadonlySet<string>;
   readonly delegationToolNames: ReadonlySet<string>;
   readonly disabledFrameworkToolNames: ReadonlySet<string>;
+  readonly sandboxDisabled?: boolean;
 }): Pick<AgentInfoTools, "available" | "framework"> {
   const occupiedToolNames = new Set([...input.authoredToolNames, ...input.delegationToolNames]);
   const available: AgentInfoToolEntry[] = [];
@@ -398,12 +409,16 @@ export function buildFrameworkToolInfo(input: {
 
   for (const definition of getAllFrameworkToolDefinitions()) {
     const disabledByAuthor = input.disabledFrameworkToolNames.has(definition.name);
+    const disabledBySandbox =
+      input.sandboxDisabled === true && isSandboxBackedFrameworkToolName(definition.name);
     const replacedByAuthoredTool = input.authoredToolNames.has(definition.name);
     const status: AgentInfoFrameworkToolEntry["status"] = disabledByAuthor
       ? "disabled"
       : occupiedToolNames.has(definition.name)
         ? "replaced"
-        : "active";
+        : disabledBySandbox
+          ? "unavailable"
+          : "active";
     const rendered = renderTool(definition, {
       origin: "framework",
       replacesFrameworkTool: false,
@@ -416,6 +431,7 @@ export function buildFrameworkToolInfo(input: {
     framework.push({
       ...rendered,
       disabledByAuthor,
+      disabledBySandbox,
       replacedByAuthoredTool,
       status,
     });
@@ -502,19 +518,29 @@ export function renderSchedule(schedule: ResolvedScheduleDefinition): AgentInfoS
   };
 }
 
-function renderSandbox(sandbox: ResolvedSandboxDefinition | null): AgentInfoSandboxEntry | null {
-  if (sandbox === null) {
+function renderSandbox(sandbox: ResolvedSandboxSelection): AgentInfoSandboxEntry | null {
+  if (sandbox.kind === "default") {
     return null;
   }
 
+  if (sandbox.kind === "disabled") {
+    return {
+      ...toSource(sandbox.source),
+      status: "disabled",
+    };
+  }
+
+  const definition = sandbox.definition;
+
   return {
-    ...toSource(sandbox),
-    backendKind: resolveBackendKind(sandbox.backend),
-    description: sandbox.description,
-    hasBootstrap: sandbox.bootstrap !== undefined,
-    hasOnSession: sandbox.onSession !== undefined,
-    revalidationKey: sandbox.revalidationKey,
-    sourceHash: sandbox.sourceHash,
+    ...toSource(definition),
+    backendKind: resolveBackendKind(definition.backend),
+    description: definition.description,
+    hasBootstrap: definition.bootstrap !== undefined,
+    hasOnSession: definition.onSession !== undefined,
+    revalidationKey: definition.revalidationKey,
+    sourceHash: definition.sourceHash,
+    status: "configured",
   };
 }
 
