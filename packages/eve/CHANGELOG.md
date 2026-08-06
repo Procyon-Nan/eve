@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.1
+
+### Patch Changes
+
+- 9a9e1a5: Add an explicit `disableSandbox()` authoring API. Agents that opt out pass inline file parts directly to the model without provisioning a sandbox backend.
+
 ## 0.27.12-baigong.0
 
 ### Patch Changes
