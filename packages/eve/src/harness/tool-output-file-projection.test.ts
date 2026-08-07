@@ -98,6 +98,16 @@ describe("projectToolOutputFilesForModel", () => {
       "text",
       "file",
     ]);
+    expect(Array.isArray(userContent) ? userContent[0] : undefined).toEqual({
+      text: "Files returned by prior tool result #1:",
+      type: "text",
+    });
+    expect(JSON.stringify(Array.isArray(userContent) ? userContent[0] : undefined)).not.toContain(
+      "render",
+    );
+    expect(JSON.stringify(Array.isArray(userContent) ? userContent[0] : undefined)).not.toContain(
+      "call-1",
+    );
     const file = Array.isArray(userContent) ? userContent[2] : undefined;
     expect(file?.type).toBe("file");
     if (file?.type === "file") {
@@ -203,6 +213,42 @@ describe("projectToolOutputFilesForModel", () => {
     const result = projectToolOutputFilesForModel(messages);
 
     expect(result.map((message) => message.role)).toEqual(["tool", "tool", "user"]);
+  });
+
+  it("restarts file-result ordinals after a non-tool message boundary", () => {
+    const messages = [
+      toolMessage([
+        contentResult({
+          files: [{ base64: "b25l", mediaType: "image/png" }],
+          id: "call-1",
+          name: "first",
+        }),
+      ]),
+      { content: "next step", role: "assistant" as const },
+      toolMessage([
+        contentResult({
+          files: [{ base64: "dHdv", mediaType: "image/png" }],
+          id: "call-2",
+          name: "second",
+        }),
+      ]),
+    ];
+
+    const result = projectToolOutputFilesForModel(messages);
+    const labels = result.flatMap((message) =>
+      message.role === "user" && Array.isArray(message.content)
+        ? message.content.flatMap((part) =>
+            part.type === "text" && part.text.startsWith("Files returned by prior")
+              ? [part.text]
+              : [],
+          )
+        : [],
+    );
+
+    expect(labels).toEqual([
+      "Files returned by prior tool result #1:",
+      "Files returned by prior tool result #1:",
+    ]);
   });
 
   it("does not mutate durable history", () => {

@@ -10,12 +10,14 @@ const FILE_ONLY_TOOL_RESULT_PLACEHOLDER =
 export function projectToolOutputFilesForModel(messages: readonly ModelMessage[]): ModelMessage[] {
   let projectedMessages: ModelMessage[] | undefined;
   let pendingAttachmentContent: Array<TextPart | FilePart> | undefined;
+  let projectedToolResultCount = 0;
 
   for (const [messageIndex, message] of messages.entries()) {
     if (message.role !== "tool" || !Array.isArray(message.content)) {
       if (projectedMessages !== undefined) {
         appendPendingAttachmentMessage(projectedMessages, pendingAttachmentContent);
         pendingAttachmentContent = undefined;
+        projectedToolResultCount = 0;
         projectedMessages.push(message);
       }
       continue;
@@ -47,8 +49,9 @@ export function projectToolOutputFilesForModel(messages: readonly ModelMessage[]
         },
       };
 
+      projectedToolResultCount += 1;
       attachmentContent.push({
-        text: `Files returned by tool "${part.toolName}" (${part.toolCallId}):`,
+        text: `Files returned by prior tool result #${projectedToolResultCount}:`,
         type: "text",
       });
       for (const outputPart of part.output.value) {

@@ -65,6 +65,32 @@ const DISABLED_SANDBOX_DESCRIPTOR: ScenarioAppDescriptor = {
       "});",
       "",
     ].join("\n"),
+    "agent/tools/return_file.ts": [
+      'import { defineTool } from "eve/tools";',
+      "",
+      "export default defineTool({",
+      '  description: "Return a small image as model-visible file content.",',
+      '  inputSchema: { type: "object", properties: {}, additionalProperties: false },',
+      "  execute() {",
+      '    return { base64: Buffer.from("scenario tool image").toString("base64") };',
+      "  },",
+      "  toModelOutput(output) {",
+      "    return {",
+      '      type: "content",',
+      "      value: [",
+      '        { type: "text", text: "Tool image attached." },',
+      "        {",
+      '          type: "file",',
+      '          data: { type: "data", data: output.base64 },',
+      '          mediaType: "image/png",',
+      '          filename: "tool-image.png",',
+      "        },",
+      "      ],",
+      "    };",
+      "  },",
+      "});",
+      "",
+    ].join("\n"),
   },
   installDependencies: true,
   name: "disabled-sandbox-attachments",
@@ -91,6 +117,7 @@ describe("disabled sandbox attachment runtime", () => {
         });
         expect(info.subagents.total).toBe(1);
         expect(info.tools.dynamic.map((tool) => tool.slug)).toContain("inspect_attachments");
+        expect(info.tools.available.map((tool) => tool.name)).toContain("return_file");
         expect(info.tools.available.map((tool) => tool.name)).toContain("ask_question");
         expect(info.tools.available.map((tool) => tool.name)).toContain("agent");
         expect(info.tools.available.map((tool) => tool.name)).not.toContain("bash");
@@ -149,6 +176,19 @@ describe("disabled sandbox attachment runtime", () => {
         expect(largeImageResult.events.some((event) => event.type === "session.waiting")).toBe(
           true,
         );
+
+        const toolFileResult = await sendDevelopmentMessage({
+          message: "Call return_file and inspect its image output.",
+          serverUrl: server.url,
+          session: createDevelopmentSessionState(),
+        });
+        expect(toolFileResult.events.filter((event) => event.type === "step.started")).toHaveLength(
+          2,
+        );
+        expect(
+          toolFileResult.events.filter((event) => event.type === "message.received"),
+        ).toHaveLength(1);
+        expect(toolFileResult.events.some((event) => event.type === "session.waiting")).toBe(true);
 
         const delegationResult = await sendDevelopmentMessage({
           message: "Delegate to a subagent: Reply with the exact token no-sandbox-child.",
