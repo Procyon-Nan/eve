@@ -62,3 +62,6 @@ Thumbs.db
 
 # CodeGraph
 .codegraph/
+
+# tmp
+tmp/

@@ -124,7 +124,7 @@ This is different from omitting the file. No `sandbox.ts` means “use the frame
 
 With the sandbox disabled:
 
-- Inline image and PDF `FilePart`s remain in the message and go directly to the configured model. eve does not write another copy or replace the payload with an `eve-sandbox:` URL.
+- Inline image and PDF `FilePart`s remain in the message and go directly to the configured model. eve does not write another copy or replace the payload with an `eve-sandbox:` URL. Context compaction uses a bounded, file-aware estimate instead of counting base64 as text, and the active turn remains intact until the model has received its files at least once.
 - `bash`, `read_file`, `write_file`, `glob`, and `grep` are not exposed. Plain static skills containing only compiled instructions remain available through `load_skill`; packaged skills, inline skill files, and dynamic skills require a sandbox and are rejected during compilation.
 - `agent/sandbox/workspace/**` is a compile-time conflict.
 - `ctx.getSandbox()` and file reads through `ctx.getSkill()` are unavailable. Configure a sandbox before using those APIs.
@@ -135,6 +135,8 @@ The choice is node-local. A declared subagent does not inherit its parent's disa
 Disabling a sandbox does not weaken a channel's MIME type, size, authentication, or upload policy. It changes only what eve does after the channel has accepted a file.
 
 Historical messages may already contain `eve-sandbox:` references. A disabled agent cannot read those references and fails with an instruction to re-enable the original sandbox or start a new session and attach the files again; opting out never starts a sandbox solely for historical compatibility.
+
+Completed turns remain eligible for normal context compaction. Their image and PDF payloads may be replaced in the summary by a filename and media-type placeholder, so use a tool or a sandbox path when the model must reopen an old artifact. If the active turn itself exceeds the provider's real context limit, eve preserves its files and surfaces the provider error instead of silently dropping them.
 
 ## Backends
 

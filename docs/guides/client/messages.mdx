@@ -98,7 +98,9 @@ const response = await session.send({
 await response.result();
 ```
 
-By default, eve stages inline attachment bytes in the current agent's sandbox and stores an `eve-sandbox:` reference in session history. An agent that explicitly exports `disableSandbox()` instead passes image and PDF file parts directly to the model without provisioning a backend or creating a second copy. This does not bypass the channel's MIME type, size, authentication, or upload checks. Existing sessions whose history already contains `eve-sandbox:` references must keep their original sandbox configuration or start a new session before switching to disabled mode.
+By default, eve stages inline attachment bytes in the current agent's sandbox and stores an `eve-sandbox:` reference in session history. An agent that explicitly exports `disableSandbox()` instead passes image and PDF file parts directly to the model without provisioning a backend or creating a second copy. Context compaction does not count their base64 payloads as ordinary text, and eve preserves the active turn until the model receives its new files at least once. If that active input exceeds the provider's real context limit, the request fails with the provider error rather than retrying after silently deleting the files. Completed older turns remain eligible for compaction, which may retain only a filename and media-type placeholder.
+
+These guarantees do not bypass the channel's MIME type, size, authentication, or upload checks. Existing sessions whose history already contains `eve-sandbox:` references must keep their original sandbox configuration or start a new session before switching to disabled mode.
 
 The stream confirms the turn with `message.received`. Its `data.message` remains the flattened
 summary for compatibility, and `data.parts` contains structured text and file metadata for clients

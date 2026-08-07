@@ -127,6 +127,29 @@ describe("disabled sandbox attachment runtime", () => {
         expect(completed).not.toContain("eve-sandbox:");
         expect(result.events.some((event) => event.type === "session.waiting")).toBe(true);
 
+        const largeImageResult = await sendDevelopmentMessage({
+          message: [
+            { type: "text", text: "Call inspect_attachments for this large image." },
+            {
+              data: `data:image/png;base64,${Buffer.alloc(2_927_949, 0xa5).toString("base64")}`,
+              filename: "large-image.png",
+              mediaType: "image/png",
+              type: "file",
+            },
+          ],
+          serverUrl: server.url,
+          session: createDevelopmentSessionState(),
+        });
+        expect(largeImageResult.events.some((event) => event.type === "compaction.requested")).toBe(
+          false,
+        );
+        expect(largeImageResult.events.some((event) => event.type === "compaction.completed")).toBe(
+          false,
+        );
+        expect(largeImageResult.events.some((event) => event.type === "session.waiting")).toBe(
+          true,
+        );
+
         const delegationResult = await sendDevelopmentMessage({
           message: "Delegate to a subagent: Reply with the exact token no-sandbox-child.",
           serverUrl: server.url,

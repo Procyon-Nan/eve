@@ -55,6 +55,7 @@ import {
   hydrateSandboxAttachments,
   stageAttachmentsToSandbox,
 } from "#harness/attachment-staging.js";
+import { projectToolOutputFilesForModel } from "#harness/tool-output-file-projection.js";
 import {
   buildWorkflowHostTools,
   resolveWorkflowSandboxBridgeRequestLimit,
@@ -742,12 +743,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // remains ref-only so it can flow into `session.history` without
     // bloating every future step boundary.
     const hydratedMessages = await hydrateSandboxAttachments(messages);
+    const projectedMessages = projectToolOutputFilesForModel(hydratedMessages);
 
     // AI SDK rejects role:"system" in `messages` — route system entries
     // from durable history to `instructions` instead.
     const systemMessages: SystemModelMessage[] = [];
     const nonSystemMessages: ModelMessage[] = [];
-    for (const entry of hydratedMessages) {
+    for (const entry of projectedMessages) {
       if (entry.role === "system") {
         systemMessages.push(entry);
       } else {
