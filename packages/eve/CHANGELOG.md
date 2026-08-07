@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.3
+
+### Patch Changes
+
+- 9953efd: Avoid repeating executable Tool names in transient file-projection messages so deterministic and name-sensitive models do not call the same Tool again.
+
 ## 0.27.12-baigong.2
 
 ### Patch Changes
