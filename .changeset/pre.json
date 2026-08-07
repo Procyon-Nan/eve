@@ -34,6 +34,7 @@
   },
   "changesets": [
     "bright-files-opt-out",
+    "calm-tools-project-output",
     "quiet-mice-recover",
     "quiet-tools-return-files",
     "soft-files-stay-visible"

@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.4
+
+### Patch Changes
+
+- 2b7eac3: Preserve `toModelOutput` when session- and turn-scoped dynamic tools are replayed. Rich media and redacted outputs now keep their authored model projection instead of falling back to the raw Tool result.
+
 ## 0.27.12-baigong.3
 
 ### Patch Changes
