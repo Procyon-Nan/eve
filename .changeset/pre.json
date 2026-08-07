@@ -32,5 +32,5 @@
     "eve": "0.27.11",
     "@vercel/eve-catalog": "0.0.1"
   },
-  "changesets": ["bright-files-opt-out", "quiet-mice-recover"]
+  "changesets": ["bright-files-opt-out", "quiet-mice-recover", "soft-files-stay-visible"]
 }

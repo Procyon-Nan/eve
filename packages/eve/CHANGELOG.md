@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.2
+
+### Patch Changes
+
+- b0f4824: Preserve active image and PDF inputs across context compaction, and project tool-returned files as genuine multimodal model input instead of base64 tool-result text.
+
 ## 0.27.12-baigong.1
 
 ### Patch Changes
