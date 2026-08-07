@@ -24,10 +24,15 @@ import {
   SessionDynamicToolRuntimeRevisionKey,
   TurnDynamicToolMetadataKey,
   LiveStepToolsKey,
+  SessionIdKey,
 } from "#context/keys.js";
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
+import {
+  registerDynamicToolStepFunction,
+  replayDynamicTools,
+} from "#context/dynamic-tool-replay.js";
 
 const log = createLogger("dynamic-tools");
 
@@ -95,68 +100,12 @@ export function replayDynamicSessionTools(
   metadata: readonly DurableDynamicToolMetadata[],
   _resolvers: readonly ResolvedDynamicToolResolver[],
 ): readonly HarnessToolDefinition[] {
-  const tools: HarnessToolDefinition[] = [];
-
-  for (const m of metadata) {
-    if (!m.executeStepFnName || !m.closureVars) {
-      log.warn(
-        `Dynamic tool "${m.name}" has no registered step function — ` +
-          "skipping on this step. The bundler transform may not have processed this tool file.",
-      );
-      continue;
-    }
-
-    const stepFn = lookupStepFunction(m.executeStepFnName);
-    if (!stepFn) {
-      log.warn(
-        `Dynamic tool "${m.name}" references step function "${m.executeStepFnName}" ` +
-          "which is not registered — skipping on this step.",
-      );
-      continue;
-    }
-
-    tools.push({
-      description: m.description,
-      execute: createToolExecuteWithAuth({
-        scope: m.name,
-        execute: (input, ctx) => stepFn(m.closureVars, input, ctx),
-      }),
-      inputSchema: toInputSchema(m.inputSchema),
-      name: m.name,
-      outputSchema: toOutputSchema(m.outputSchema),
-    });
-  }
-
-  return tools;
+  return replayDynamicTools(metadata);
 }
 
 // ---------------------------------------------------------------------------
 // Step function lookup + serialization helpers
 // ---------------------------------------------------------------------------
-
-function getStepRegistry(): Map<string, Function> {
-  const key = Symbol.for("@workflow/core//registeredSteps");
-  const g = globalThis as Record<symbol, Map<string, Function> | undefined>;
-  let registry = g[key];
-  if (registry === undefined) {
-    registry = new Map();
-    g[key] = registry;
-  }
-  return registry;
-}
-
-function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) | null {
-  try {
-    const fn = getStepRegistry().get(stepId);
-    return fn ? (fn as (...args: unknown[]) => unknown) : null;
-  } catch {
-    return null;
-  }
-}
-
-function registerStepFunction(stepId: string, fn: Function): void {
-  getStepRegistry().set(stepId, fn);
-}
 
 function safeSerialize(obj: Record<string, unknown>): Record<string, unknown> {
   try {
@@ -202,6 +151,31 @@ interface ResolveResult {
   readonly liveTools: readonly HarnessToolDefinition[];
 }
 
+interface ReplayableDynamicToolEntry extends DynamicToolEntry {
+  readonly __executeStepFn?: { readonly stepId?: string };
+  readonly __closureVars?: Record<string, unknown>;
+  readonly __toModelOutputStepFn?: { readonly stepId?: string };
+  readonly __toModelOutputClosureVars?: Record<string, unknown>;
+}
+
+function runtimeStepId(input: {
+  readonly entryKey: string;
+  readonly eventType: string;
+  readonly kind: "approval" | "execute" | "to-model-output";
+  readonly resolverSlug: string;
+  readonly sessionId: string;
+}): string {
+  return `eve:runtime-dynamic:${[
+    input.kind,
+    input.sessionId,
+    input.eventType,
+    input.resolverSlug,
+    input.entryKey,
+  ]
+    .map(encodeURIComponent)
+    .join(":")}`;
+}
+
 async function resolveToolsFromEvent(
   ctx: ContextContainer,
   resolvers: readonly ResolvedDynamicToolResolver[],
@@ -237,6 +211,7 @@ async function resolveToolsFromEvent(
   // silently shadow each other (a dynamic tool overriding an authored one is
   // allowed and handled at merge time).
   const dynamicToolOwners = new Map<string, string>();
+  const sessionId = ctx.require(SessionIdKey);
 
   for (const outcome of outcomes) {
     if (outcome.status === "rejected") {
@@ -263,14 +238,9 @@ async function resolveToolsFromEvent(
         continue;
       }
 
-      const stepFn =
-        "__executeStepFn" in entry
-          ? (entry as { __executeStepFn?: { stepId?: string } }).__executeStepFn
-          : undefined;
-      const closureVars =
-        "__closureVars" in entry
-          ? (entry as { __closureVars?: Record<string, unknown> }).__closureVars
-          : undefined;
+      const replayableEntry = entry as ReplayableDynamicToolEntry;
+      const stepFn = replayableEntry.__executeStepFn;
+      const closureVars = replayableEntry.__closureVars;
 
       let executeStepFnName = stepFn?.stepId;
       let serializedClosureVars =
@@ -281,13 +251,21 @@ async function resolveToolsFromEvent(
       // closure in the step registry so session/turn-scoped metadata
       // can replay them the same way as authored tools.
       if (executeStepFnName === undefined) {
-        const syntheticId = `eve:framework-dynamic:${resolver.slug}:${entryKey}`;
+        const syntheticId = runtimeStepId({
+          entryKey,
+          eventType: event.type,
+          kind: "execute",
+          resolverSlug: resolver.slug,
+          sessionId,
+        });
         const originalExecute = entry.execute.bind(entry);
-        registerStepFunction(syntheticId, (_closureVars: unknown, input: unknown, ctx: unknown) =>
-          originalExecute(
-            input as Record<string, unknown>,
-            ctx as Parameters<typeof entry.execute>[1],
-          ),
+        registerDynamicToolStepFunction(
+          syntheticId,
+          (_closureVars: unknown, input: unknown, ctx: unknown) =>
+            originalExecute(
+              input as Record<string, unknown>,
+              ctx as Parameters<typeof entry.execute>[1],
+            ),
         );
         executeStepFnName = syntheticId;
         serializedClosureVars = {};
@@ -295,11 +273,41 @@ async function resolveToolsFromEvent(
 
       let approvalStepFnName: string | undefined;
       if (entry.approval !== undefined) {
-        approvalStepFnName = `eve:dynamic-tool-approval:${resolver.slug}:${entryKey}`;
+        approvalStepFnName = runtimeStepId({
+          entryKey,
+          eventType: event.type,
+          kind: "approval",
+          resolverSlug: resolver.slug,
+          sessionId,
+        });
         const originalApproval = entry.approval.bind(entry);
-        registerStepFunction(approvalStepFnName, (_closureVars: unknown, approvalCtx: unknown) =>
-          originalApproval(approvalCtx as ApprovalContext),
+        registerDynamicToolStepFunction(
+          approvalStepFnName,
+          (_closureVars: unknown, approvalCtx: unknown) =>
+            originalApproval(approvalCtx as ApprovalContext),
         );
+      }
+
+      let toModelOutputStepFnName = replayableEntry.__toModelOutputStepFn?.stepId;
+      let toModelOutputClosureVars =
+        replayableEntry.__toModelOutputClosureVars === undefined
+          ? undefined
+          : safeSerialize(replayableEntry.__toModelOutputClosureVars);
+
+      if (entry.toModelOutput !== undefined && toModelOutputStepFnName === undefined) {
+        toModelOutputStepFnName = runtimeStepId({
+          entryKey,
+          eventType: event.type,
+          kind: "to-model-output",
+          resolverSlug: resolver.slug,
+          sessionId,
+        });
+        const originalToModelOutput = entry.toModelOutput.bind(entry);
+        registerDynamicToolStepFunction(
+          toModelOutputStepFnName,
+          (_closureVars: unknown, output: unknown) => originalToModelOutput(output),
+        );
+        toModelOutputClosureVars = {};
       }
 
       metadata.push({
@@ -312,6 +320,8 @@ async function resolveToolsFromEvent(
         executeStepFnName,
         approvalStepFnName,
         closureVars: serializedClosureVars,
+        toModelOutputStepFnName,
+        toModelOutputClosureVars,
       });
     }
   }
