@@ -1,28 +1,28 @@
 /**
  * Compiler transform for dynamic tool files.
  *
- * Hoists inline `execute` functions from `defineDynamic`
+ * Hoists inline `execute` and `toModelOutput` functions from `defineDynamic`
  * event handler return values to module-scope named functions
  * registered in the global step registry. The workflow SDK then
  * handles serialization and replay.
  *
  * The walker enters nested functions (helpers, callbacks, IIFEs) so
- * patterns like `function buildTool(n) { return { execute() {} } }`
- * are supported. For each execute found, scope variables from every
- * enclosing function between the handler and the execute are
- * collected. Only variables the execute body actually references are
+ * patterns like `function buildTool(n) { return defineTool({ execute() {} }) }`
+ * are supported. For each replayable function found, scope variables from
+ * every enclosing function between the handler and the function are
+ * collected. Only variables the function body actually references are
  * captured — this avoids TDZ errors from later declarations.
  *
- * At each call site the inline execute is replaced with:
+ * At each call site the inline function is replaced with:
  * - A wrapper that passes referenced scope values as `__vars`
- * - `__executeStepFn`: reference to the hoisted function
- * - `__closureVars`: snapshot for durable serialization
+ * - A property-specific step-function reference
+ * - A property-specific closure snapshot for durable serialization
  *
- * Limitation: `execute` must be an inline function literal (function
+ * Limitation: each replayable property must be an inline function literal (function
  * expression, arrow, or method shorthand). Variable references
- * (`execute: myFn`) and call results (`execute: makeFn()`) are not
- * detected — the transform returns null and the tool works on the
- * first workflow step but is not replayable.
+ * (`execute: myFn`, `toModelOutput: project`) and call results are not
+ * detected, so those functions have no compiler-backed cross-process
+ * replay metadata and can only use the runtime's process-local fallback.
  */
 
 import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
@@ -40,16 +40,16 @@ interface HandlerInfo {
   scopeVars: readonly string[];
   /** Handler parameter names (event, ctx) */
   paramNames: readonly string[];
-  /** Execute functions found inside the return value */
-  executes: readonly ExecuteInfo[];
+  /** Replayable tool functions found inside the return value */
+  replayableFunctions: readonly ReplayableFunctionInfo[];
 }
 
-interface ExecuteInfo {
-  /** Full property range (execute: function(...) { ... }) */
+interface ReplayableFunctionInfo {
+  /** Full property range (for example, execute: function(...) { ... }) */
   propStart: number;
   propEnd: number;
-  /** The function source (params + body) */
-  fnSource: string;
+  /** Authored property name. */
+  propertyName: "execute" | "toModelOutput";
   /** Whether the function is async */
   isAsync: boolean;
   /** Generated name for the hoisted function */
@@ -60,9 +60,22 @@ interface ExecuteInfo {
   body: string;
   /** Function body AST used to identify actual identifier references */
   bodyNode: AstNode;
-  /** Scope entries from nested functions between handler and this execute */
+  /** Scope entries from nested functions between handler and this function */
   nestedScopes: readonly ScopeEntry[];
 }
+
+const REPLAYABLE_TOOL_PROPERTIES = {
+  execute: {
+    closureField: "__closureVars",
+    hoistedPrefix: "__eve_dynamic_exec",
+    stepFunctionField: "__executeStepFn",
+  },
+  toModelOutput: {
+    closureField: "__toModelOutputClosureVars",
+    hoistedPrefix: "__eve_dynamic_to_model_output",
+    stepFunctionField: "__toModelOutputStepFn",
+  },
+} as const;
 
 interface ScopeEntry {
   readonly params: readonly string[];
@@ -73,7 +86,7 @@ let transformCounter = 0;
 
 /**
  * Transforms a dynamic tool file:
- * 1. Hoists execute functions to module scope with "use step"
+ * 1. Hoists execute and model-output functions to module scope
  * 2. Captures handler-scope variables via __vars parameter
  * 3. Adds "use step" to event handlers so the workflow SDK caches
  *    the handler's return value (resolver runs once per scope)
@@ -97,7 +110,7 @@ export async function transformDynamicToolExecute(
   const ast = await parseSource(filename, source);
   const handlers = findDynamicToolHandlers(source, ast);
 
-  if (handlers.every((h) => h.executes.length === 0)) {
+  if (handlers.every((h) => h.replayableFunctions.length === 0)) {
     return null;
   }
 
@@ -158,15 +171,15 @@ function collectHandlers(source: string, eventsObj: AstNode, handlers: HandlerIn
 
     const paramNames = extractParamNames(handler);
     const scopeVars = collectScopeVarDeclarations(bodyNode);
-    const executes = findExecuteFunctions(source, bodyNode);
+    const replayableFunctions = findReplayableToolFunctions(source, bodyNode);
 
-    if (executes.length > 0) {
+    if (replayableFunctions.length > 0) {
       handlers.push({
         handlerNode: handler,
         bodyStart,
         scopeVars,
         paramNames,
-        executes,
+        replayableFunctions,
       });
     }
   }
@@ -199,8 +212,7 @@ function extractParamNames(fn: AstNode): string[] {
 
 /**
  * Collects all variable declarations at the top level of a function
- * body (const, let, var). These are the potential closure variables
- * that execute functions might reference.
+ * body (const, let, var). These are potential closure variables.
  */
 function collectScopeVarDeclarations(bodyNode: AstNode): string[] {
   const vars: string[] = [];
@@ -211,7 +223,7 @@ function collectScopeVarDeclarations(bodyNode: AstNode): string[] {
 function collectVarsRecursive(node: AstNode | null | undefined, vars: string[]): void {
   if (!node) return;
 
-  // Stop at function boundaries — don't capture execute-local vars
+  // Stop at function boundaries — don't capture function-local vars
   if (
     node.type === "FunctionExpression" ||
     node.type === "ArrowFunctionExpression" ||
@@ -294,26 +306,25 @@ function collectPatternNames(pattern: AstNode | null, names: string[]): void {
 }
 
 /**
- * Finds execute function properties inside object expressions in the
- * handler's return value.
+ * Finds replayable function properties inside defineTool calls in the handler.
  */
-function findExecuteFunctions(source: string, bodyNode: AstNode): ExecuteInfo[] {
-  const results: ExecuteInfo[] = [];
-  walkForExecuteProps(source, bodyNode, results, []);
+function findReplayableToolFunctions(source: string, bodyNode: AstNode): ReplayableFunctionInfo[] {
+  const results: ReplayableFunctionInfo[] = [];
+  walkForReplayableToolProps(source, bodyNode, results, []);
   return results;
 }
 
-function walkForExecuteProps(
+function walkForReplayableToolProps(
   source: string,
   node: AstNode | null | undefined,
-  results: ExecuteInfo[],
+  results: ReplayableFunctionInfo[],
   nestedScopes: readonly ScopeEntry[],
 ): void {
   if (!node) return;
 
   // When crossing a function boundary, collect the function's params
   // and body-level vars as a new scope entry, then continue walking
-  // inside. This lets us hoist execute functions from helpers, .map()
+  // inside. This lets us hoist tool functions from helpers, .map()
   // callbacks, etc. — the wrapper captures all enclosing scope vars.
   if (
     node.type === "FunctionExpression" ||
@@ -327,15 +338,15 @@ function walkForExecuteProps(
     const extended = [...nestedScopes, { params: fnParams, vars: fnVars }];
     // Walk into the function body with the extended scope chain
     if (bodyNode.type === "BlockStatement") {
-      walkForExecuteProps(source, bodyNode, results, extended);
+      walkForReplayableToolProps(source, bodyNode, results, extended);
     } else {
-      // Arrow with expression body: () => ({ execute() {} })
-      walkForExecuteProps(source, bodyNode, results, extended);
+      // Arrow with expression body: () => defineTool({ execute() {} })
+      walkForReplayableToolProps(source, bodyNode, results, extended);
     }
     return;
   }
 
-  // Only match `execute` inside a `defineTool(...)` call — not on bare objects.
+  // Only match replayable properties inside a `defineTool(...)` call.
   if (
     node.type === "CallExpression" &&
     node.callee?.type === "Identifier" &&
@@ -349,7 +360,7 @@ function walkForExecuteProps(
         prop.type === "Property" &&
         !prop.computed &&
         prop.key?.type === "Identifier" &&
-        prop.key.name === "execute" &&
+        (prop.key.name === "execute" || prop.key.name === "toModelOutput") &&
         prop.start !== undefined &&
         prop.end !== undefined
       ) {
@@ -369,12 +380,12 @@ function walkForExecuteProps(
             results.push({
               propStart: prop.start,
               propEnd: prop.end,
-              fnSource: source.slice(fn.start, fn.end),
+              propertyName: prop.key.name,
               isAsync,
               params,
               body,
               bodyNode,
-              hoistedName: `__eve_dynamic_exec_${transformCounter++}`,
+              hoistedName: `${REPLAYABLE_TOOL_PROPERTIES[prop.key.name].hoistedPrefix}_${transformCounter++}`,
               nestedScopes,
             });
           }
@@ -387,7 +398,7 @@ function walkForExecuteProps(
 
   // Recurse into child nodes, threading the scope chain through
   const walk = (child: AstNode | null | undefined) =>
-    walkForExecuteProps(source, child, results, nestedScopes);
+    walkForReplayableToolProps(source, child, results, nestedScopes);
 
   if (Array.isArray(node.body)) {
     for (const child of node.body) walk(child);
@@ -454,15 +465,14 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   const hoistedFunctions: string[] = [];
   const registrations: string[] = [];
-  const allExecNames: string[] = [];
 
   for (const handler of handlers) {
-    for (const exec of handler.executes) {
+    for (const replayableFunction of handler.replayableFunctions) {
       // Build the full set of candidate vars: handler scope + nested scopes
       const candidateVars = [
         ...handler.paramNames,
         ...handler.scopeVars,
-        ...exec.nestedScopes.flatMap((s) => [...s.params, ...s.vars]),
+        ...replayableFunction.nestedScopes.flatMap((s) => [...s.params, ...s.vars]),
       ];
 
       // Deduplicate, keeping last occurrence (inner scope shadows outer)
@@ -475,39 +485,41 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
         }
       }
 
-      // Only capture vars the execute body actually references. This
-      // avoids TDZ errors when the execute is inside a nested function
+      // Only capture vars the function body actually references. This
+      // avoids TDZ errors when the function is inside a nested function
       // that runs before later handler-level declarations are initialized.
-      const referencedNames = collectReferencedIdentifierNames(exec.bodyNode);
+      const referencedNames = collectReferencedIdentifierNames(replayableFunction.bodyNode);
 
-      // Exclude names that collide with the execute function's own
+      // Exclude names that collide with the replayable function's own
       // parameters — the hoisted function already has those as formal
       // params, and a `const { name } = __vars` would be a duplicate
       // binding SyntaxError.
-      const execParamNames = extractExecuteParamNames(exec.params);
+      const functionParamNames = extractFunctionParamNames(replayableFunction.params);
 
       const allVars = deduped.filter(
-        (name) => !execParamNames.has(name) && referencedNames.has(name),
+        (name) => !functionParamNames.has(name) && referencedNames.has(name),
       );
 
       const varsObj = allVars.length > 0 ? `{ ${allVars.join(", ")} }` : "{}";
 
-      const asyncPrefix = exec.isAsync ? "async " : "";
+      const asyncPrefix = replayableFunction.isAsync ? "async " : "";
       const varsDestructure = allVars.length > 0 ? `const ${varsObj} = __vars;\n  ` : "";
-      const originalParams = exec.params;
+      const originalParams = replayableFunction.params;
       const hoistedParams = originalParams ? `__vars, ${originalParams}` : "__vars";
-      const bodyContent = exec.body.slice(1, -1).trim();
-      const stepId = `eve:dynamic-tool//${exec.hoistedName}`;
+      const bodyContent = replayableFunction.body.slice(1, -1).trim();
+      const stepId = `eve:dynamic-tool//${replayableFunction.hoistedName}`;
+      const propertyMetadata = REPLAYABLE_TOOL_PROPERTIES[replayableFunction.propertyName];
 
       hoistedFunctions.push(
-        `${asyncPrefix}function ${exec.hoistedName}(${hoistedParams}) {\n` +
+        `${asyncPrefix}function ${replayableFunction.hoistedName}(${hoistedParams}) {\n` +
           `  ${varsDestructure}${bodyContent}\n` +
           `}`,
       );
 
-      registrations.push(`${exec.hoistedName}.stepId = ${JSON.stringify(stepId)};`);
-      registrations.push(`__eveStepRegistry.set(${JSON.stringify(stepId)}, ${exec.hoistedName});`);
-      allExecNames.push(exec.hoistedName);
+      registrations.push(`${replayableFunction.hoistedName}.stepId = ${JSON.stringify(stepId)};`);
+      registrations.push(
+        `__eveStepRegistry.set(${JSON.stringify(stepId)}, ${replayableFunction.hoistedName});`,
+      );
 
       const wrapperParams = originalParams || "";
       const paramNames = originalParams
@@ -516,16 +528,16 @@ function applyTransform(source: string, handlers: HandlerInfo[]): { code: string
             .join(", ")
         : "";
       const wrapperArgs = paramNames ? `${varsObj}, ${paramNames}` : varsObj;
-      const wrapperAsync = exec.isAsync ? "async " : "";
-      const wrapperAwait = exec.isAsync ? "await " : "";
+      const wrapperAsync = replayableFunction.isAsync ? "async " : "";
+      const wrapperAwait = replayableFunction.isAsync ? "await " : "";
 
       replacements.push({
-        start: exec.propStart,
-        end: exec.propEnd,
+        start: replayableFunction.propStart,
+        end: replayableFunction.propEnd,
         text: [
-          `execute: ${wrapperAsync}(${wrapperParams}) => ${wrapperAwait}${exec.hoistedName}(${wrapperArgs})`,
-          `__executeStepFn: ${exec.hoistedName}`,
-          `__closureVars: ${varsObj}`,
+          `${replayableFunction.propertyName}: ${wrapperAsync}(${wrapperParams}) => ${wrapperAwait}${replayableFunction.hoistedName}(${wrapperArgs})`,
+          `${propertyMetadata.stepFunctionField}: ${replayableFunction.hoistedName}`,
+          `${propertyMetadata.closureField}: ${varsObj}`,
         ].join(",\n          "),
       });
     }
@@ -642,9 +654,9 @@ function extractParamBindingName(param: string): string {
 }
 
 /**
- * Extracts binding names from a raw execute parameter string.
+ * Extracts binding names from a raw function parameter string.
  */
-function extractExecuteParamNames(paramString: string): Set<string> {
+function extractFunctionParamNames(paramString: string): Set<string> {
   if (!paramString) return new Set();
   const names = new Set<string>();
   for (const part of splitParamsTopLevel(paramString)) {

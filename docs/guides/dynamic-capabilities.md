@@ -51,9 +51,13 @@ export default defineDynamic({
 });
 ```
 
-### `execute` must be an inline function
+### `execute` and `toModelOutput` must be inline functions
 
-Write `execute` as an inline function expression, arrow, or method shorthand placed directly as the property value. The bundler transform does not detect `execute: myFn` or `execute: makeFn()`, so those tools work on the first step but do not survive replay (re-running a step after a crash or resume; see [Execution model & durability](../concepts/execution-model-and-durability)). On later steps the transform reconstructs each `execute` from its stored closure variables instead of re-running the resolver, which is why it has to be inline.
+Write `execute` and optional `toModelOutput` as inline function expressions, arrows, or method shorthand placed directly as their property values. The bundler transform does not detect references such as `execute: myFn` or `toModelOutput: projectOutput`, nor call results such as `execute: makeFn()`. Those forms use a process-local fallback: they can replay while the current runtime process retains the live function, but they do not survive a cold start or deployment (see [Execution model & durability](../concepts/execution-model-and-durability)).
+
+On later model steps, session- and turn-scoped tools reconstruct both functions from separate stored closure snapshots instead of re-running the resolver. Keeping the snapshots separate means an output mapper only persists the values it actually uses. Step-scoped tools re-resolve before each model call and retain their live functions.
+
+Framework integrations can also construct dynamic tools at runtime, outside the authored module that the bundler transforms. eve registers those live functions for replay within the current runtime process. That fallback is not a cross-process durability contract; authored dynamic tools that must resume after a cold start or deployment should use the inline form above.
 
 ### Naming
 
