@@ -24,6 +24,7 @@ import { toInputSchema } from "#shared/tool-schema.js";
 function buildSerializedContext(overrides: {
   auth?: Record<string, unknown>;
   channelKind: string;
+  channelState?: Record<string, unknown>;
   continuationToken: string;
   mode: string;
   parent?: {
@@ -39,7 +40,7 @@ function buildSerializedContext(overrides: {
   const context: Record<string, unknown> = {
     "eve.auth": overrides.auth ?? null,
     "eve.bundle": { source: createBundledRuntimeCompiledArtifactsSource() },
-    "eve.channel": { kind: overrides.channelKind, state: {} },
+    "eve.channel": { kind: overrides.channelKind, state: overrides.channelState ?? {} },
     "eve.continuationToken": overrides.continuationToken,
     "eve.mode": overrides.mode,
   };
@@ -506,7 +507,8 @@ describe("workflowEntry integration", () => {
 
       const stream = captureTurnEvents(run);
       try {
-        await stream.nextTurn();
+        const events = await stream.nextTurn();
+        expect(filterEventsByType(events, "session.started")[0]?.data.invocation).toBeUndefined();
 
         const world = await getWorld();
         const persisted = await world.runs.get(run.runId);
@@ -531,6 +533,12 @@ describe("workflowEntry integration", () => {
     await runtime.run(async () => {
       const serializedContext = buildSerializedContext({
         channelKind: "subagent",
+        channelState: {
+          callId: "call-subagent-1",
+          parentContinuationToken: "parent-continuation-token",
+          parentSessionId: "parent-session",
+          subagentName: "researcher",
+        },
         continuationToken: "subagent:parent-session:call-subagent-1",
         mode: "task",
         parent: {
@@ -563,21 +571,34 @@ describe("workflowEntry integration", () => {
         },
       );
 
-      await expect(run.returnValue).resolves.toEqual({
-        output: expect.stringContaining("subagent tag round-trip"),
-      });
-      await expect(run.status).resolves.toBe("completed");
+      const stream = captureEvents(run);
+      try {
+        const events = await stream.nextUntil(
+          "subagent session started",
+          (event) => event.type === "session.started",
+        );
+        expect(filterEventsByType(events, "session.started")[0]?.data.invocation).toEqual({
+          kind: "subagent",
+          name: "researcher",
+          parentCallId: "call-subagent-1",
+          parentSessionId: "parent-session",
+          parentTurnId: "turn-parent",
+        });
 
-      const world = await getWorld();
-      const persisted = await world.runs.get(run.runId);
-      const attrs = (persisted as { attributes?: Record<string, string> }).attributes ?? {};
+        const world = await getWorld();
+        const persisted = await world.runs.get(run.runId);
+        const attrs = (persisted as { attributes?: Record<string, string> }).attributes ?? {};
 
-      expect(attrs["$eve.type"]).toBe("subagent");
-      expect(attrs["$eve.parent"]).toBe("parent-session");
-      expect(attrs["$eve.parent_call"]).toBe("call-subagent-1");
-      expect(attrs["$eve.parent_turn"]).toBe("turn-parent");
-      expect(attrs["$eve.root"]).toBe("root-session");
-      expect(attrs["$eve.trigger"]).toBe("subagent");
+        expect(attrs["$eve.type"]).toBe("subagent");
+        expect(attrs["$eve.parent"]).toBe("parent-session");
+        expect(attrs["$eve.parent_call"]).toBe("call-subagent-1");
+        expect(attrs["$eve.parent_turn"]).toBe("turn-parent");
+        expect(attrs["$eve.root"]).toBe("root-session");
+        expect(attrs["$eve.trigger"]).toBe("subagent");
+      } finally {
+        stream.dispose();
+        await run.cancel();
+      }
     });
   });
 });

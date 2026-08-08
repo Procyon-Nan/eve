@@ -13,6 +13,7 @@ import {
   AuthKey,
   CapabilitiesKey,
   ModeKey,
+  ParentSessionKey,
   SessionDynamicToolRuntimeRevisionKey,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
@@ -69,6 +70,7 @@ import {
 } from "#execution/durable-session-migrations/turn-workflow.js";
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { routeDeliverPayload } from "#execution/subagent-hitl-proxy.js";
+import { resolveSubagentSessionInvocation } from "#execution/subagent-session-invocation.js";
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
@@ -271,6 +273,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   const dynamicSkillResolvers = bundle.resolvedAgent.dynamicSkillResolvers ?? [];
   const dynamicToolResolvers = bundle.resolvedAgent.dynamicToolResolvers ?? [];
   const runtimeIdentity = buildRuntimeIdentity(bundle.graph.root);
+  const sessionInvocation = resolveSubagentSessionInvocation({
+    adapter: ctx.require(ChannelKey),
+    parent: ctx.get(ParentSessionKey),
+  });
   const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
   const dynamicToolRuntimeRevision = deploymentId
     ? `deployment:${deploymentId}`
@@ -283,7 +289,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     await refreshDynamicSessionToolsForRuntimeRevision({
       ctx,
       resolvers: dynamicToolResolvers,
-      event: createSessionStartedEvent({ runtime: runtimeIdentity }),
+      event: createSessionStartedEvent({
+        invocation: sessionInvocation,
+        runtime: runtimeIdentity,
+      }),
       messages: initialSession.history,
       runtimeRevision: dynamicToolRuntimeRevision,
     });
@@ -393,6 +402,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             nodeId: bundle.nodeId,
           },
           node: bundle.graph.root,
+          sessionInvocation,
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });
         return step(refreshedSession, stepInput);
