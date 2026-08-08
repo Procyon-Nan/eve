@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.5
+
+### Patch Changes
+
+- 2ace555: Subagent child streams now include stable parent session, turn, call, and subagent name metadata in `session.started`, allowing clients to correlate parent and child streams safely.
+
 ## 0.27.12-baigong.4
 
 ### Patch Changes
