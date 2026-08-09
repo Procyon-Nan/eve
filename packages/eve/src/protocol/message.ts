@@ -252,6 +252,7 @@ export interface SubagentCalledStreamEvent {
     childSessionId: string;
     sessionId: string;
     sequence: number;
+    message: string;
     name: string;
     remote?: {
       url: string;
@@ -1058,6 +1059,7 @@ export function createSubagentCalledEvent(input: {
   readonly childSessionId: string;
   readonly sessionId: string;
   readonly sequence: number;
+  readonly message: string;
   readonly name: string;
   readonly remote?: {
     readonly url: string;
@@ -1072,6 +1074,7 @@ export function createSubagentCalledEvent(input: {
       childSessionId: input.childSessionId,
       sessionId: input.sessionId,
       sequence: input.sequence,
+      message: input.message,
       name: input.name,
       remote: input.remote,
       toolName: input.toolName,

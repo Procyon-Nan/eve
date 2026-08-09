@@ -12,6 +12,7 @@ import {
   createResultCompletedEvent,
   createSessionWaitingEvent,
   createStepStartedEvent,
+  createSubagentCalledEvent,
   createTurnCancelledEvent,
   encodeMessageStreamEvent,
   timestampHandleMessageStreamEvent,
@@ -77,6 +78,29 @@ describe("message stream protocol", () => {
     const decoded = JSON.parse(new TextDecoder().decode(encoded).trim()) as typeof timed;
 
     expect(decoded).toEqual(timed);
+  });
+
+  it("preserves the exact delegation message in encoded subagent.called events", () => {
+    const event = createSubagentCalledEvent({
+      callId: "call-1",
+      childSessionId: "child-session",
+      message: "  Keep spacing.\n保留换行。  ",
+      name: "research",
+      sequence: 2,
+      sessionId: "parent-session",
+      toolName: "research",
+      turnId: "turn-2",
+      workflowId: "workflow",
+    });
+
+    expect(event.data.message).toBe("  Keep spacing.\n保留换行。  ");
+
+    const encoded = encodeMessageStreamEvent(
+      timestampHandleMessageStreamEvent(event, "2026-08-09T00:00:00.000Z"),
+    );
+    const decoded = JSON.parse(new TextDecoder().decode(encoded).trim()) as typeof event;
+
+    expect(decoded.data.message).toBe("  Keep spacing.\n保留换行。  ");
   });
 
   it("builds authorization.required with optional challenge and webhookUrl", () => {

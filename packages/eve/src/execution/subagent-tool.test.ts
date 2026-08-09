@@ -40,6 +40,44 @@ function buildRuntimeSubagentRunInput(
 }
 
 describe("buildSubagentRunInput", () => {
+  it("preserves the exact delegation message while synthesizing the child prompt", () => {
+    const action: RuntimeSubagentCallActionRequest = {
+      ...makeAction(),
+      input: { message: "  Keep spacing.\n保留换行。  " },
+    };
+
+    const { delegationMessage, runInput } = buildRuntimeSubagentRunInput({
+      action,
+      auth: null,
+      batchEvent: { sequence: 0, turnId: "turn-0" },
+      initiatorAuth: null,
+      session: makeSession(),
+    });
+
+    expect(delegationMessage).toBe("  Keep spacing.\n保留换行。  ");
+    expect(runInput.input.message).toContain("Caller message:\n  Keep spacing.\n保留换行。  ");
+  });
+
+  it.each([
+    ["missing", {}],
+    ["non-string", { message: 42 }],
+  ])("rejects a %s delegation message", (_label, actionInput) => {
+    const action: RuntimeSubagentCallActionRequest = {
+      ...makeAction(),
+      input: actionInput,
+    };
+
+    expect(() =>
+      buildRuntimeSubagentRunInput({
+        action,
+        auth: null,
+        batchEvent: { sequence: 0, turnId: "turn-0" },
+        initiatorAuth: null,
+        session: makeSession(),
+      }),
+    ).toThrow('Subagent action "call-1" input.message must be a string.');
+  });
+
   it("forwards parent capabilities to the child run input", () => {
     const { runInput } = buildRuntimeSubagentRunInput({
       action: makeAction(),

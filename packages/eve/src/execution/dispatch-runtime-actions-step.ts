@@ -42,7 +42,11 @@ import {
   startRemoteAgentSession,
 } from "#execution/remote-agent-dispatch.js";
 import { hydrateDurableSession } from "#execution/session.js";
-import { buildSubagentRunInput, type SubagentInputSource } from "#execution/subagent-tool.js";
+import {
+  buildSubagentRunInput,
+  resolveSubagentDelegationMessage,
+  type SubagentInputSource,
+} from "#execution/subagent-tool.js";
 import { createWorkflowRuntime, workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
@@ -114,6 +118,7 @@ export async function dispatchRuntimeActionsStep(input: {
       }
 
       let childSessionId: string;
+      let delegationMessage: string;
       let name: string;
       let remote: { readonly url: string } | undefined;
       let toolName: string;
@@ -129,7 +134,7 @@ export async function dispatchRuntimeActionsStep(input: {
             compiledArtifactsSource: bundle.compiledArtifactsSource,
             nodeId: action.nodeId,
           });
-          const { childContinuationToken, runInput } = buildSubagentRunInput({
+          const subagentRunInput = buildSubagentRunInput({
             action,
             auth,
             batchEvent: batch.event,
@@ -141,8 +146,9 @@ export async function dispatchRuntimeActionsStep(input: {
             session,
             source,
           });
+          delegationMessage = subagentRunInput.delegationMessage;
           try {
-            const handle = await childRuntime.run(runInput);
+            const handle = await childRuntime.run(subagentRunInput.runInput);
             childSessionId = handle.sessionId;
           } catch (error) {
             logError(log, "local subagent start failed", error, {
@@ -166,7 +172,7 @@ export async function dispatchRuntimeActionsStep(input: {
           nextSession = recordPendingSubagentChild({
             callId: action.callId,
             child: {
-              continuationToken: childContinuationToken,
+              continuationToken: subagentRunInput.childContinuationToken,
               kind: "local",
               sessionId: childSessionId,
             },
@@ -177,6 +183,7 @@ export async function dispatchRuntimeActionsStep(input: {
           break;
         }
         case "remote-agent-call": {
+          delegationMessage = resolveSubagentDelegationMessage(action);
           let resolvedRemote;
           try {
             resolvedRemote = resolveRemoteAgentForAction({
@@ -221,6 +228,7 @@ export async function dispatchRuntimeActionsStep(input: {
         createSubagentCalledEvent({
           callId: action.callId,
           childSessionId,
+          message: delegationMessage,
           name,
           remote,
           sequence: batch.event.sequence,

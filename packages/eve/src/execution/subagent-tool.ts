@@ -11,7 +11,10 @@ import type {
   SessionCapabilities,
 } from "#channel/types.js";
 import type { HarnessSession } from "#harness/types.js";
-import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
+import type {
+  RuntimeRemoteAgentCallActionRequest,
+  RuntimeSubagentCallActionRequest,
+} from "#runtime/actions/types.js";
 import { mintSubagentContinuationToken } from "#execution/session.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { resolveRemainingSessionTokenLimits } from "#harness/subagent-token-budget.js";
@@ -36,13 +39,28 @@ export type SubagentInputSource =
 /**
  * Result of {@link buildSubagentRunInput}.
  *
- * Exposes the derived `childContinuationToken` alongside the
- * {@link RunInput} so dispatch sites never re-derive the token from
- * `(callId, parentSessionId)` on their own.
+ * Exposes the derived `childContinuationToken` and validated
+ * `delegationMessage` alongside the {@link RunInput} so dispatch sites never
+ * re-derive the token or recover the delegation from the synthesized prompt.
  */
 export interface SubagentRunInputBuild {
   readonly childContinuationToken: string;
+  readonly delegationMessage: string;
   readonly runInput: RunInput;
+}
+
+/**
+ * Reads the exact delegation message submitted through a subagent or remote-agent action.
+ */
+export function resolveSubagentDelegationMessage(
+  action: RuntimeSubagentCallActionRequest | RuntimeRemoteAgentCallActionRequest,
+): string {
+  const message = action.input.message;
+  if (typeof message !== "string") {
+    throw new TypeError(`Subagent action "${action.callId}" input.message must be a string.`);
+  }
+
+  return message;
 }
 
 /**
@@ -99,6 +117,7 @@ export function buildSubagentRunInput(input: {
   const inheritedLimits: {
     -readonly [K in keyof RunSessionLimits]: RunSessionLimits[K];
   } = resolveRemainingSessionTokenLimits(session, input.fanoutSize);
+  const delegationMessage = resolveSubagentDelegationMessage(action);
   const requestedOutputSchema = normalizeRequestedOutputSchema(action.input.outputSchema);
 
   const runInput: {
@@ -122,7 +141,11 @@ export function buildSubagentRunInput(input: {
     continuationToken: childContinuationToken,
     initiatorAuth,
     input: {
-      message: formatSubagentCallInputMessage({ action, source }),
+      message: formatSubagentCallInputMessage({
+        message: delegationMessage,
+        name: action.subagentName,
+        source,
+      }),
       outputSchema: requestedOutputSchema,
     },
     limits: inheritedLimits,
@@ -139,30 +162,29 @@ export function buildSubagentRunInput(input: {
     subagentDepth: subagentDepth.nextChildDepth,
   };
 
-  return { childContinuationToken, runInput };
+  return { childContinuationToken, delegationMessage, runInput };
 }
 
 /**
  * Formats the synthesized child input message for one delegated subagent call.
  */
 function formatSubagentCallInputMessage(input: {
-  readonly action: Pick<RuntimeSubagentCallActionRequest, "input" | "subagentName">;
+  readonly message: string;
+  readonly name: string;
   readonly source: SubagentInputSource;
 }): string {
-  const { message } = input.action.input as { message: string };
-
   switch (input.source.type) {
     case "local":
       return formatSubagentInput({
         description: input.source.description,
-        message,
-        name: input.action.subagentName,
+        message: input.message,
+        name: input.name,
         type: "local",
       }).message;
     case "runtime":
       return formatSubagentInput({
-        message,
-        name: input.action.subagentName,
+        message: input.message,
+        name: input.name,
         type: "runtime",
       }).message;
     default: {

@@ -301,6 +301,7 @@ describe("deriveRunFacts", () => {
         data: {
           callId: "c1",
           childSessionId: "s1",
+          message: "Check the weather.",
           sessionId: "s0",
           sequence: 1,
           name: "weather",

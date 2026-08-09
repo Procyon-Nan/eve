@@ -772,6 +772,7 @@ function subagentCalled(
     data: {
       callId: "call_subagent",
       childSessionId,
+      message: `Delegate to ${name}.`,
       sessionId: "parent-session",
       sequence: 1,
       name,

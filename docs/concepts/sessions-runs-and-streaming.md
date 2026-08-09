@@ -43,7 +43,7 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 | `actions.requested`       | The model requested one or more actions, including tool calls; calls stream before execution.                    |
 | `action.result`           | A tool call returned.                                                                                            |
 | `input.requested`         | The run paused for human input ([HITL](/docs/human-in-the-loop) approval or `ask_question`); carries `requests`. |
-| `subagent.called`         | A subagent was delegated; carries `childSessionId` to attach to.                                                 |
+| `subagent.called`         | A subagent was delegated; carries `childSessionId` and the exact original delegation `message`.                  |
 | `subagent.completed`      | A delegated subagent finished.                                                                                   |
 | `reasoning.appended`      | A reasoning delta (incremental, with cumulative text so far).                                                    |
 | `reasoning.completed`     | The finalized reasoning block.                                                                                   |
@@ -69,7 +69,7 @@ Note: consider the privacy, confidentiality, and user-experience implications fo
 
 `message.completed` can fire more than once in a turn: the agent often emits interim assistant text before a tool call. To tell tool-call narration from a terminal reply, check `message.completed.data.finishReason`. `step.completed.data.finishReason` mirrors the step outcome, and usage lives on `step.completed`.
 
-A delegated subagent publishes progress on its own child-session stream. The parent only emits `subagent.called` with a `childSessionId`, which a client uses to attach.
+A delegated subagent publishes progress on its own child-session stream. The parent emits `subagent.called` with a `childSessionId`, which a client uses to attach, and the exact original delegation text in `data.message`. The child's `message.received.data.message` is synthesized model input and is not a stable source for recovering that text.
 
 `step.failed` and `turn.failed` carry `{ code, message, details? }` for the failed fragment or turn, and `session.failed` is the terminal session-level variant. `turn.cancelled` is not a failure: the cancelled turn ends without any failure event, `session.waiting` follows, and the session accepts the next message normally — whatever the turn streamed before cancellation stays on the stream, while durable history keeps only what had already settled. When a turn requested an output schema, the finalized payload lands on `result.completed` as `data.result` before the turn boundary. `authorization.required` carries the sign-in challenge (`data.authorization` may include `url`, `userCode`, `expiresAt`, `instructions`), and `authorization.completed` carries `data.outcome` (`"authorized" | "declined" | "failed" | "timed-out"`).
 

@@ -108,6 +108,21 @@ function createTestWritable(
   });
 }
 
+function readWorkflowEvents(
+  namespace = DEFAULT_WORKFLOW_STREAM_NAMESPACE,
+): Array<{ data: Record<string, unknown>; type: string }> {
+  return (workflowWritesByNamespace.get(namespace) ?? []).map((chunk) => {
+    if (!(chunk instanceof Uint8Array)) {
+      throw new TypeError("Expected workflow stream writes to be Uint8Array chunks.");
+    }
+
+    return JSON.parse(new TextDecoder().decode(chunk).trim()) as {
+      data: Record<string, unknown>;
+      type: string;
+    };
+  });
+}
+
 vi.mock("./node-step.js", () => ({
   buildRuntimeIdentity: vi.fn(() => ({
     agentId: "test-agent",
@@ -480,6 +495,111 @@ describe("dispatchRuntimeActionsStep", () => {
       ],
       expect.any(Object),
     );
+    expect(readWorkflowEvents()).toMatchObject([
+      {
+        data: {
+          callId: "call-1",
+          message: "investigate latest routing",
+        },
+        type: "subagent.called",
+      },
+    ]);
+  });
+
+  it("keeps delegation messages isolated across parallel local subagents", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    const compiledBundle = {
+      adapterRegistry: {
+        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
+      },
+      compiledArtifactsSource: {},
+      graph: {
+        nodesByNodeId: new Map(),
+        root: {
+          sandboxRegistry: { sandbox: null },
+          turnAgent: TestTurnAgent,
+        },
+      },
+      hookRegistry: createEmptyHookRegistry(),
+      resolvedAgent: { config: {} },
+      subagentRegistry: {
+        subagentsByNodeId: new Map([
+          [
+            "subagents/research",
+            { definition: { description: "Research facts.", kind: "subagent" } },
+          ],
+          [
+            "subagents/review",
+            { definition: { description: "Review results.", kind: "subagent" } },
+          ],
+        ]),
+      },
+      toolRegistry: {},
+      turnAgent: TestTurnAgent,
+    } as never;
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(compiledBundle);
+    startMock
+      .mockResolvedValueOnce({ runId: "research-child" })
+      .mockResolvedValueOnce({ runId: "review-child" });
+
+    const session = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-research",
+          description: "Delegate research.",
+          input: { message: "  Research routing.\nKeep evidence.  " },
+          kind: "subagent-call",
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+        {
+          callId: "call-review",
+          description: "Delegate review.",
+          input: { message: "Review only the routing evidence." },
+          kind: "subagent-call",
+          name: "review",
+          nodeId: "subagents/review",
+          subagentName: "review",
+        },
+      ],
+      event: { sequence: 4, stepIndex: 0, turnId: "turn-4" },
+      responseMessages: [],
+      session: createStubSession({
+        continuationToken: "http:parent",
+        sessionId: "parent-session",
+      }),
+    });
+    installSessionStoreMocks([session]);
+
+    const result = await dispatchRuntimeActionsStep({
+      parentWritable: createTestWritable(),
+      serializedContext: createSerializedContext(),
+      sessionState: createStubSessionState({
+        continuationToken: "http:parent",
+        sessionId: "parent-session",
+      }),
+    });
+
+    expect(result.results).toEqual([]);
+    expect(
+      readWorkflowEvents().map((event) => ({
+        callId: event.data.callId,
+        message: event.data.message,
+        type: event.type,
+      })),
+    ).toEqual([
+      {
+        callId: "call-research",
+        message: "  Research routing.\nKeep evidence.  ",
+        type: "subagent.called",
+      },
+      {
+        callId: "call-review",
+        message: "Review only the routing evidence.",
+        type: "subagent.called",
+      },
+    ]);
   });
 
   it("returns a failed subagent result when remote session creation fails", async () => {
@@ -655,6 +775,15 @@ describe("dispatchRuntimeActionsStep", () => {
         childSessionIds: { "call-remote": "remote-child" },
       },
     );
+    expect(readWorkflowEvents()).toMatchObject([
+      {
+        data: {
+          callId: "call-remote",
+          message: "investigate latest routing",
+        },
+        type: "subagent.called",
+      },
+    ]);
   });
 
   it("blocks a stale recursive agent call from a delegated session", async () => {

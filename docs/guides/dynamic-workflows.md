@@ -41,9 +41,9 @@ return findings.join("\n\n");
 Each `tools.analyst(...)` call dispatches a child subagent, so the parent stream records one `subagent.called` per metric and one `subagent.completed` as each finishes:
 
 ```json
-{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_1", "childSessionId": "ses_a1", "sequence": 0 } }
-{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_2", "childSessionId": "ses_a2", "sequence": 1 } }
-{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_3", "childSessionId": "ses_a3", "sequence": 2 } }
+{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_1", "childSessionId": "ses_a1", "message": "Summarize last week's revenue.", "sequence": 0 } }
+{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_2", "childSessionId": "ses_a2", "message": "Summarize last week's signups.", "sequence": 1 } }
+{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_3", "childSessionId": "ses_a3", "message": "Summarize last week's churn.", "sequence": 2 } }
 { "type": "subagent.completed", "data": { "subagentName": "analyst", "callId": "call_1", "output": "..." } }
 { "type": "subagent.completed", "data": { "subagentName": "analyst", "callId": "call_2", "output": "..." } }
 { "type": "subagent.completed", "data": { "subagentName": "analyst", "callId": "call_3", "output": "..." } }
