@@ -38,6 +38,7 @@
     "quiet-mice-recover",
     "quiet-tools-return-files",
     "soft-files-stay-visible",
-    "steady-subagents-lineage"
+    "steady-subagents-lineage",
+    "warm-subagents-delegate"
   ]
 }

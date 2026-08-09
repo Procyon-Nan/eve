@@ -1,5 +1,11 @@
 # eve
 
+## 0.27.12-baigong.6
+
+### Patch Changes
+
+- 8475bcc: `subagent.called` events now include the exact original delegation message in `data.message`, allowing clients to render delegated tasks without parsing the child prompt.
+
 ## 0.27.12-baigong.5
 
 ### Patch Changes
