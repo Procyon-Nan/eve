@@ -152,7 +152,7 @@ import {
   extractUpstreamRejectionMessage,
 } from "#harness/model-call-error.js";
 import { summarizeKnownError, type SemanticErrorSummary } from "#harness/semantic-errors/index.js";
-import { throwIfTurnAborted } from "#harness/turn-cancellation.js";
+import { isTurnCancellation, throwIfTurnAborted } from "#harness/turn-cancellation.js";
 import type { JsonObject, JsonValue } from "#shared/json.js";
 import {
   CONDITIONAL_DELIVERY_INSTRUCTION,
@@ -929,6 +929,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       disabledProviderTools?: ReadonlySet<string>;
       extraSystemNote?: string;
       preparedInput?: ReturnType<typeof prepareModelCallInput>;
+      retryMode?: "classified";
       retryReason?: "empty-response";
       suppressStepStartedEmission?: boolean;
       trailingUserNote?: string;
@@ -1196,6 +1197,9 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           turnId: emissionState.turnId,
         },
         config.abortSignal,
+        {
+          retryAllModelErrors: config.mode === "conversation" && opts.retryMode !== "classified",
+        },
       );
 
     // Resolve first-attempt instrumentation before step.started dispatch
@@ -1347,7 +1351,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           turnId: emissionState.turnId,
         });
 
-        if (classification === "terminal") {
+        if (classification === "terminal" && config.mode !== "conversation") {
           if (catalogSummary !== null) {
             // Recognized configuration failure: log a concise single line
             // and skip the structured SDK dump so the user sees an
@@ -1628,6 +1632,7 @@ function buildModelCallFailureLogFields(input: {
 type RecoveryRetryCallOptions = {
   readonly disabledProviderTools?: ReadonlySet<string>;
   readonly extraSystemNote?: string;
+  readonly retryMode?: "classified";
 };
 
 /**
@@ -1864,6 +1869,7 @@ async function attemptUnsupportedProviderToolRecovery(input: {
   try {
     const result = await input.runOneModelCall({
       ...retryCallOptions,
+      retryMode: "classified",
       suppressStepStartedEmission: true,
     });
     return { outcome: "recovered", result };
@@ -1972,6 +1978,7 @@ async function attemptEmptyResponseRecovery(input: {
   try {
     const result = await input.runOneModelCall({
       ...input.retryCallOptions,
+      retryMode: "classified",
       retryReason: "empty-response",
       suppressStepStartedEmission: true,
       trailingUserNote: buildEmptyResponseNudge(input.emptyDeliveryEnabled),
@@ -2684,15 +2691,17 @@ function resolveApprovalKeyFromTools(
 }
 
 /**
- * Retries `fn` with exponential backoff while the thrown error is
- * classified as `"retry"`. Rethrows the last error once attempts are
- * exhausted or the error is classified as something other than
- * transient.
+ * Retries `fn` with exponential backoff. Task runs retry only errors
+ * classified as `"retry"`; conversation runs may opt into retrying every
+ * model-call error so configuration fixes can happen after the turn parks.
+ * Cancellation and the dedicated provider-tool/empty-response recovery
+ * paths never consume this general retry budget.
  */
 async function runModelCallWithRetries<T>(
   fn: (attempt: number) => Promise<T>,
   diag: { readonly sessionId: string; readonly turnId: string },
   abortSignal?: AbortSignal,
+  options: { readonly retryAllModelErrors?: boolean } = {},
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     throwIfTurnAborted(abortSignal);
@@ -2700,18 +2709,29 @@ async function runModelCallWithRetries<T>(
       return await fn(attempt);
     } catch (error) {
       throwIfTurnAborted(abortSignal);
-      if (attempt === MODEL_CALL_MAX_ATTEMPTS || classifyModelCallError(error) !== "retry") {
+      const retryAllModelErrors = options.retryAllModelErrors === true;
+      const retryable = retryAllModelErrors
+        ? !isTurnCancellation(error) &&
+          !(error instanceof EmptyModelResponseError) &&
+          extractUnsupportedProviderToolTypes(error).length === 0
+        : classifyModelCallError(error) === "retry";
+      if (attempt === MODEL_CALL_MAX_ATTEMPTS || !retryable) {
         throw error;
       }
       const delayMs =
         MODEL_CALL_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
-      log.warn("model call failed transiently — retrying", {
-        attempt,
-        delayMs,
-        sessionId: diag.sessionId,
-        turnId: diag.turnId,
-        error,
-      });
+      log.warn(
+        retryAllModelErrors
+          ? "model call failed in conversation mode — retrying"
+          : "model call failed transiently — retrying",
+        {
+          attempt,
+          delayMs,
+          sessionId: diag.sessionId,
+          turnId: diag.turnId,
+          error,
+        },
+      );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
