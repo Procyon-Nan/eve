@@ -2,7 +2,11 @@ import type { LanguageModel, ModelMessage, UserContent } from "ai";
 
 import type { SessionCapabilities } from "#channel/types.js";
 import type { AlsContext } from "#context/container.js";
-import type { UnstampedMessageStreamEvent, RuntimeIdentity } from "#protocol/message.js";
+import type {
+  UnstampedMessageStreamEvent,
+  RuntimeIdentity,
+  SubagentSessionInvocationMetadata,
+} from "#protocol/message.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type { RuntimeActionResult } from "#runtime/actions/types.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
@@ -307,6 +311,8 @@ export interface ToolLoopHarnessConfig {
    * authoritative server-side metadata.
    */
   readonly runtimeIdentity?: RuntimeIdentity;
+  /** Invocation lineage attached to a local subagent session's first event. */
+  readonly sessionInvocation?: SubagentSessionInvocationMetadata;
   /**
    * Unified tool definitions for this harness step.
    *

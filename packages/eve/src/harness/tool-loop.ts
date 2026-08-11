@@ -687,12 +687,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     });
     if (pending.outcome === "unresolved") {
       if (emit && pending.deferredMessage === true && hasStepInput(input)) {
-        emissionState = await emitTurnPreamble(
-          emit,
-          preambleStepInput ?? {},
-          emissionState,
-          config.runtimeIdentity,
-        );
+        emissionState = await emitTurnPreamble(emit, preambleStepInput ?? {}, emissionState, {
+          invocation: config.sessionInvocation,
+          runtime: config.runtimeIdentity,
+        });
         emissionState = await emitTurnEpilogue(emit, emissionState, config.mode);
         return {
           next: null,
@@ -724,12 +722,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     // --- Turn preamble ------------------------------------------------------
 
     if (emit && hasStepInput(input)) {
-      emissionState = await emitTurnPreamble(
-        emit,
-        preambleStepInput ?? {},
-        emissionState,
-        config.runtimeIdentity,
-      );
+      emissionState = await emitTurnPreamble(emit, preambleStepInput ?? {}, emissionState, {
+        invocation: config.sessionInvocation,
+        runtime: config.runtimeIdentity,
+      });
       session = setHarnessEmissionState(session, emissionState);
 
       if (turnSpan) {

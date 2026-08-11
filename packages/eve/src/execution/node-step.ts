@@ -9,7 +9,7 @@ import type { HandleEventFn, HarnessToolMap, StepFn } from "#harness/types.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { getInstrumentationRuntime } from "#harness/instrumentation-runtime.js";
 import { createLogger } from "#internal/logging.js";
-import type { RuntimeIdentity } from "#protocol/message.js";
+import type { RuntimeIdentity, SubagentSessionInvocationMetadata } from "#protocol/message.js";
 import { UNSPECIFIED_INPUT_SCHEMA } from "#shared/tool-schema.js";
 import type { RunMode } from "#shared/run-mode.js";
 import {
@@ -73,6 +73,8 @@ export interface CreateExecutionNodeStepInput {
   readonly mode: RunMode;
   readonly modelResolutionScope: RuntimeModelResolutionScope;
   readonly node: ResolvedRuntimeAgentNode;
+  /** Local subagent parent lineage forwarded to the harness preamble. */
+  readonly sessionInvocation?: SubagentSessionInvocationMetadata;
   /**
    * Effective `maxSubagents` cap configured by the experimental Workflow tool
    * definition and materialized on the session at creation.
@@ -112,6 +114,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     dispatchDynamicModelEvent: dispatchModelEvent,
     resolveModel,
     runtimeIdentity: buildRuntimeIdentity(input.node),
+    sessionInvocation: input.sessionInvocation,
     tools,
   });
   if (instrumentation === undefined) return step;

@@ -17,6 +17,7 @@ import {
   AuthKey,
   CapabilitiesKey,
   ModeKey,
+  ParentSessionKey,
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
 } from "#context/keys.js";
@@ -74,6 +75,7 @@ import {
 import { buildRuntimeIdentity, createExecutionNodeStep } from "#execution/node-step.js";
 import { routeDeliverPayload } from "#execution/subagent-hitl-proxy.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
+import { resolveSubagentSessionInvocation } from "#execution/subagent-session-invocation.js";
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
@@ -297,6 +299,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     turnAgent: effectiveAgent.turnAgent,
   };
   const runtimeIdentity = buildRuntimeIdentity(effectiveNode);
+  const sessionInvocation = resolveSubagentSessionInvocation({
+    adapter: ctx.require(ChannelKey),
+    parent: ctx.get(ParentSessionKey),
+  });
   const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
   const dynamicRuntimeRevision = deploymentId
     ? `deployment:${deploymentId}`
@@ -307,7 +313,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     ctx.set(SessionDynamicSubagentRuntimeRevisionKey, dynamicRuntimeRevision);
     ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
   } else {
-    const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
+    const refreshEvent = createSessionStartedEvent({
+      invocation: sessionInvocation,
+      runtime: runtimeIdentity,
+    });
     await Promise.all([
       refreshDynamicSessionSubagentsForRuntimeRevision({
         ctx,
@@ -442,6 +451,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             nodeId: bundle.nodeId,
           },
           node: effectiveNode,
+          sessionInvocation,
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });
         return step(refreshedSession, stepInput);

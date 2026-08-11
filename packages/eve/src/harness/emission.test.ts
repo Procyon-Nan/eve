@@ -2,6 +2,7 @@ import { jsonSchema, type TextStreamPart, type ToolSet } from "ai";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  emitTurnPreamble,
   emitStreamContent,
   getHarnessEmissionState,
   type HarnessEmissionState,
@@ -123,6 +124,58 @@ describe("setHarnessEmissionState", () => {
     const retrieved = getHarnessEmissionState(session.state);
 
     expect(retrieved).toEqual(state);
+  });
+});
+
+describe("emitTurnPreamble", () => {
+  it("emits runtime identity and invocation together on the first session event", async () => {
+    const emit = createEmitStub();
+    const state = getHarnessEmissionState(undefined);
+
+    const next = await emitTurnPreamble(emit, {}, state, {
+      invocation: {
+        kind: "subagent",
+        name: "researcher",
+        parentCallId: "call-parent",
+        parentSessionId: "session-parent",
+        parentTurnId: "turn-parent",
+      },
+      runtime: {
+        agentId: "agent/researcher",
+        eveVersion: "0.31.2-baigong.0",
+        modelId: "test-model",
+      },
+    });
+
+    expect(vi.mocked(emit).mock.calls[0]?.[0]).toEqual({
+      data: {
+        invocation: {
+          kind: "subagent",
+          name: "researcher",
+          parentCallId: "call-parent",
+          parentSessionId: "session-parent",
+          parentTurnId: "turn-parent",
+        },
+        runtime: {
+          agentId: "agent/researcher",
+          eveVersion: "0.31.2-baigong.0",
+          modelId: "test-model",
+        },
+      },
+      type: "session.started",
+    });
+    expect(next.sessionStarted).toBe(true);
+  });
+
+  it("does not repeat session.started on a later turn", async () => {
+    const emit = createEmitStub();
+    const first = await emitTurnPreamble(emit, {}, getHarnessEmissionState(undefined));
+
+    await emitTurnPreamble(emit, {}, { ...first, sequence: 1, turnId: "" });
+
+    const events = vi.mocked(emit).mock.calls.map(([event]) => event);
+    expect(events.filter((event) => event.type === "session.started")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turn.started")).toHaveLength(2);
   });
 });
 
