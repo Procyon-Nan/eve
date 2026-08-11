@@ -1,7 +1,7 @@
 ---
 issue: TBD
 status: in-progress
-last_updated: "2026-08-10"
+last_updated: "2026-08-11"
 ---
 
 # Baigong 0.31 maintenance migration
