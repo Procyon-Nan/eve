@@ -1,5 +1,15 @@
 # eve
 
+## 0.31.2-baigong.0
+
+### Patch Changes
+
+- 0010a8c: Add an explicit `disableSandbox()` authoring API. Agents that opt out pass inline file parts directly to the model without provisioning a sandbox backend, while file-aware compaction estimates preserve the active user turn and avoid counting encoded attachment bytes as text tokens.
+- 0d1ac3e: Preserve `toModelOutput` when session- and turn-scoped dynamic tools are replayed. Rich media and redacted outputs now keep their authored model projection instead of falling back to the raw tool result.
+- 73e8ad3: Keep conversation sessions resumable after model-call failures exhaust their bounded retry budget. Correct the model or provider configuration, then send another message through the same session instead of starting over.
+- b20f6cf: Subagent child streams now include stable parent session, turn, call, and subagent name metadata in `session.started`, allowing clients to correlate parent and child streams safely.
+- 7cd0f03: `subagent.called` events now include the exact delegation message for local, remote, dynamic, and continued subagent calls, allowing clients to attribute parent and child work without parsing synthesized prompts.
+
 ## 0.31.2
 
 ### Patch Changes
