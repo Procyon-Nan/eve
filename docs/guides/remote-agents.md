@@ -20,14 +20,14 @@ export default defineRemoteAgent({
 
 `defineRemoteAgent` accepts:
 
-| Parameter          | Type                                          | Required | Default           | Description                                                                                                                                              |
-| ------------------ | --------------------------------------------- | -------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`              | `string \| (() => string \| Promise<string>)` | Yes      | n/a               | Base URL of the remote eve deployment to call. A string is baked at compile time; a function is resolved at runtime (see [Runtime URLs](#runtime-urls)). |
-| `description`      | `string`                                      | Yes      | n/a               | Model-visible delegation description.                                                                                                                    |
-| `auth`             | `OutboundAuthFn`                              | No       | none              | Outbound auth hook from `eve/agents/auth`.                                                                                                               |
-| `forwardPrincipal` | `boolean`                                     | No       | `false`           | Forward the dispatching turn's session principal to the remote deployment (see [Forwarding the caller identity](#forwarding-the-caller-identity)).       |
-| `headers`          | `HeadersValue`                                | No       | none              | Static or lazily resolved request headers.                                                                                                               |
-| `path`             | `string`                                      | No       | `/eve/v1/session` | Route appended to `url` for the create-session request.                                                                                                  |
+| Parameter          | Type                                          | Required | Default           | Description                                                                                                                                                                          |
+| ------------------ | --------------------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `url`              | `string \| (() => string \| Promise<string>)` | Yes      | n/a               | Base URL of the remote eve deployment to call. A string is baked at compile time; a function is resolved at runtime (see [Runtime URLs](#runtime-urls)).                             |
+| `description`      | `string`                                      | Yes      | n/a               | Model-visible delegation description.                                                                                                                                                |
+| `auth`             | `OutboundAuthFn`                              | No       | none              | Outbound auth hook from `eve/agents/auth`.                                                                                                                                           |
+| `forwardPrincipal` | `boolean`                                     | No       | `false`           | Forward the dispatching turn's session principal to the remote deployment (see [Forwarding the caller identity](#forwarding-the-caller-identity)).                                   |
+| `headers`          | `HeadersValue`                                | No       | none              | Static or lazily resolved request headers.                                                                                                                                           |
+| `path`             | `string`                                      | No       | `/eve/v1/session` | Route appended to `url` for the create-session request.                                                                                                                              |
 | `outputSchema`     | `StandardSchema \| JSON Schema`               | No       | none              | Structured return type the caller requires. Enforced by the remote agent like any task-mode output schema. Set it on the definition to apply to every call, or override it per call. |
 
 ## Dynamic remote agents
@@ -126,7 +126,7 @@ A local subagent runs inline. A remote one runs in its own deployment, so dispat
 2. The parent turn parks (suspends durably without holding compute; see [Execution model & durability](../concepts/execution-model-and-durability)) until the remote posts a terminal callback.
 3. When the callback arrives, the parent resumes and surfaces the result.
 
-The parent stream carries the same `subagent.called`, `action.result`, and `subagent.completed` events as local delegation. For a remote call, `subagent.called.data.remote.url` records the target.
+The parent stream carries the same `subagent.called`, `action.result`, and `subagent.completed` events as local delegation. For a remote call, `subagent.called.data.message` preserves the exact message supplied by the caller and `subagent.called.data.remote.url` records the target. The remote session still receives eve's synthesized child prompt rather than this telemetry field.
 
 Cancelling the parent while a remote call is active sends an authenticated `POST /eve/v1/session/:childSessionId/cancel` to the remote and waits for that request to be accepted before the parent settles. eve resolves the remote's `headers` and `auth` again for every cancellation attempt, so rotating credentials work the same way as they do for session creation. Cancellation always uses the standard eve cancel path on `url`, even when `path` customizes only the create-session endpoint. The remote child reports `turn.cancelled` → `session.waiting` on its own stream; an older or unreachable remote is logged but cannot turn the parent's cancellation into a failure.
 

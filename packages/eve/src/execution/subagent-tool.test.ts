@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { SUBAGENT_ADAPTER_KIND } from "#execution/subagent-adapter-state.js";
 import type { HarnessSession } from "#harness/types.js";
 import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
-import { buildSubagentRunInput } from "#execution/subagent-tool.js";
+import {
+  buildSubagentRunInput,
+  resolveSubagentDelegationMessage,
+} from "#execution/subagent-tool.js";
 
 type BuildSubagentRunInput = Parameters<typeof buildSubagentRunInput>[0];
 
@@ -256,6 +259,39 @@ describe("buildSubagentRunInput", () => {
       ].join("\n"),
     );
     expect(runInput.input.message).not.toContain("Runtime action event description.");
+  });
+
+  it("formats the child prompt from the separately validated delegation message", () => {
+    const { runInput } = buildRuntimeSubagentRunInput({
+      action: makeAction(),
+      auth: null,
+      batchEvent: { sequence: 0, turnId: "turn-0" },
+      delegationMessage: "  Exact delegation\nwith a second line.  ",
+      initiatorAuth: null,
+      session: makeSession(),
+    });
+
+    const childMessage = runInput.input.message;
+    expect(typeof childMessage).toBe("string");
+    if (typeof childMessage !== "string") throw new TypeError("Expected a text child message.");
+    expect(
+      childMessage.endsWith("Caller message:\n  Exact delegation\nwith a second line.  "),
+    ).toBe(true);
+    expect(childMessage).not.toContain("Resolve flaky test");
+  });
+
+  it.each([
+    { message: undefined, title: "missing" },
+    { message: 42, title: "non-string" },
+  ])("rejects a $title delegation message", ({ message }) => {
+    const action = {
+      ...makeAction(),
+      input: message === undefined ? {} : { message },
+    } as RuntimeSubagentCallActionRequest;
+
+    expect(() => resolveSubagentDelegationMessage(action)).toThrow(
+      'Subagent action "call-1" input.message must be a string.',
+    );
   });
 
   it("does not pass the built-in agent tool description into the child message", () => {

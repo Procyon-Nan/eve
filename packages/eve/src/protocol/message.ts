@@ -267,6 +267,7 @@ export interface SubagentCalledStreamEvent {
   data: {
     callId: string;
     childSessionId: string;
+    message: string;
     sessionId: string;
     sequence: number;
     name: string;
@@ -1113,6 +1114,7 @@ export function createActionPartialEvent(input: {
 export function createSubagentCalledEvent(input: {
   readonly callId: string;
   readonly childSessionId: string;
+  readonly message: string;
   readonly sessionId: string;
   readonly sequence: number;
   readonly name: string;
@@ -1127,6 +1129,7 @@ export function createSubagentCalledEvent(input: {
     data: {
       callId: input.callId,
       childSessionId: input.childSessionId,
+      message: input.message,
       sessionId: input.sessionId,
       sequence: input.sequence,
       name: input.name,

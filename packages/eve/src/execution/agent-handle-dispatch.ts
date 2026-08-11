@@ -65,6 +65,7 @@ export type DispatchOutcome =
       readonly address: AgentAddress;
       readonly callId: string;
       readonly kind: "called";
+      readonly message: string;
       readonly name: string;
       readonly session: RuntimeSession;
       readonly toolName: string;
@@ -91,6 +92,8 @@ export async function dispatchToAgentHandle(input: {
   readonly agentId: string;
   readonly bundle: CompiledBundle;
   readonly currentSession: RuntimeSession;
+  /** Exact message validated while planning the complete dispatch batch. */
+  readonly delegationMessage: string;
   readonly parentToken: string;
   readonly parentTurnId: string;
 }): Promise<DispatchOutcome> {
@@ -167,6 +170,7 @@ export async function dispatchToAgentHandle(input: {
   const delivery = await deliverToAgentHandle({
     action,
     bundle,
+    delegationMessage: input.delegationMessage,
     handle,
     parentToken: input.parentToken,
   });
@@ -202,6 +206,7 @@ export async function dispatchToAgentHandle(input: {
     address: handle.address,
     callId: action.callId,
     kind: "called",
+    message: input.delegationMessage,
     name: action.name,
     session: prepared.session,
     toolName: handle.identity.name,
@@ -221,10 +226,11 @@ export async function dispatchToAgentHandle(input: {
 async function deliverToAgentHandle(input: {
   readonly action: RuntimeAgentHandleAction;
   readonly bundle: CompiledBundle;
+  readonly delegationMessage: string;
   readonly handle: Extract<AgentHandle, { phase: "running" }>;
   readonly parentToken: string;
 }): Promise<Result<void, { readonly cause: unknown; readonly permanent: boolean }>> {
-  const { action, bundle, handle } = input;
+  const { action, bundle, delegationMessage, handle } = input;
   const { address, identity } = handle;
 
   if (address.kind === "agent/remote") {
@@ -251,7 +257,7 @@ async function deliverToAgentHandle(input: {
             createEveCallbackRoutePath(input.parentToken),
           ),
         },
-        message: readSubagentMessage(action),
+        message: delegationMessage,
         outputSchema: normalizeRequestedOutputSchema(action.input.outputSchema),
         remote: { ...resolvedRemote, url: address.url },
         sessionId: address.sessionId,
@@ -279,7 +285,7 @@ async function deliverToAgentHandle(input: {
         },
         kind: "send",
         payload: {
-          message: readSubagentMessage(action),
+          message: delegationMessage,
           outputSchema: normalizeRequestedOutputSchema(action.input.outputSchema),
         },
       },
@@ -316,8 +322,4 @@ function createAgentErrorResult(input: {
         ? input.action.remoteAgentName
         : input.action.subagentName,
   };
-}
-
-function readSubagentMessage(action: RuntimeAgentHandleAction): string {
-  return typeof action.input.message === "string" ? action.input.message : "";
 }

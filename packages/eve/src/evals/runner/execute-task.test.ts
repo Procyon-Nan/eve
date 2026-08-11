@@ -794,6 +794,7 @@ function subagentCalled(
     data: {
       callId: "call_subagent",
       childSessionId,
+      message: "Complete the delegated task.",
       sessionId: "parent-session",
       sequence: 1,
       name,

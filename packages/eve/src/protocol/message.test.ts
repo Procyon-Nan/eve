@@ -14,6 +14,7 @@ import {
   createResultCompletedEvent,
   createSessionWaitingEvent,
   createStepStartedEvent,
+  createSubagentCalledEvent,
   createTurnCancelledEvent,
   encodeMessageStreamEvent,
   stampMessageStreamEvent,
@@ -118,6 +119,28 @@ describe("message stream protocol", () => {
     const event = createStepStartedEvent({ sequence: 0, stepIndex: 0, turnId: "turn_0" });
 
     expect(stampMessageStreamEvent(event).meta.id).not.toBe(stampMessageStreamEvent(event).meta.id);
+  });
+
+  it("preserves the exact subagent delegation message through encoding", () => {
+    const event = stampMessageStreamEvent(
+      createSubagentCalledEvent({
+        callId: "call_1",
+        childSessionId: "session_child",
+        message: "  Keep leading space.\nKeep the next line.  ",
+        name: "researcher",
+        sequence: 2,
+        sessionId: "session_parent",
+        toolName: "researcher",
+        turnId: "turn_1",
+        workflowId: "workflow_1",
+      }),
+    );
+
+    const decoded = JSON.parse(
+      new TextDecoder().decode(encodeMessageStreamEvent(event)).trim(),
+    ) as { data: { message: string } };
+
+    expect(decoded.data.message).toBe("  Keep leading space.\nKeep the next line.  ");
   });
 
   it("builds authorization.required with optional challenge and webhookUrl", () => {

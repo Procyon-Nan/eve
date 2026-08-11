@@ -41,9 +41,9 @@ return findings.join("\n\n");
 Each `tools.analyst(...)` call dispatches a child subagent, so the parent stream records one `subagent.called` per metric and one `subagent.completed` as each finishes:
 
 ```json
-{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_1", "childSessionId": "ses_a1", "sequence": 0 } }
-{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_2", "childSessionId": "ses_a2", "sequence": 1 } }
-{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_3", "childSessionId": "ses_a3", "sequence": 2 } }
+{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_1", "childSessionId": "ses_a1", "message": "Summarize last week's revenue.", "sequence": 0 } }
+{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_2", "childSessionId": "ses_a2", "message": "Summarize last week's retention.", "sequence": 1 } }
+{ "type": "subagent.called", "data": { "name": "analyst", "toolName": "analyst", "callId": "call_3", "childSessionId": "ses_a3", "message": "Summarize last week's support load.", "sequence": 2 } }
 { "type": "subagent.completed", "data": { "subagentName": "analyst", "callId": "call_1", "output": "..." } }
 { "type": "subagent.completed", "data": { "subagentName": "analyst", "callId": "call_2", "output": "..." } }
 { "type": "subagent.completed", "data": { "subagentName": "analyst", "callId": "call_3", "output": "..." } }
@@ -77,7 +77,7 @@ That is an allowlist, not a denylist. The sandbox cannot read files, open a sock
 
 - **Durable.** The whole orchestration counts as one step. Subagents dispatched together run concurrently, and if a run parks (suspends durably without holding compute; see [Execution model & durability](../concepts/execution-model-and-durability)) on a long-running or human-gated child, it resumes where it left off after a restart.
 - **Approval-safe.** A subagent that needs human approval (HITL, human-in-the-loop) mid-run surfaces its request to the user, and the workflow picks back up once that is answered, same as direct delegation.
-- **Observable.** Every orchestrated subagent emits the usual `subagent.called` / `subagent.completed` events on the parent stream and gets its own child session and stream. The telemetry matches direct delegation, so existing dashboards and cost attribution keep working.
+- **Observable.** Every orchestrated subagent emits the usual `subagent.called` / `subagent.completed` events on the parent stream and gets its own child session and stream. `subagent.called.data.message` preserves the exact message passed to that call, so parallel sibling delegations remain independently attributable. The telemetry matches direct delegation, so existing dashboards and cost attribution keep working.
 
 ## What to read next
 
