@@ -10,6 +10,7 @@ import {
   type CompiledToolDefinition,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
+  DISABLED_COMPILED_SANDBOX_KIND,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import { buildVercelAgentSummary } from "#internal/nitro/host/build-vercel-agent-summary.js";
@@ -353,6 +354,28 @@ describe("buildVercelAgentSummary", () => {
     // dashboard consumers can render "uses framework default" without
     // having to guess from a missing field.
     expect(summary.instructions).toBeNull();
+  });
+
+  it("distinguishes an explicitly disabled sandbox from the framework default", () => {
+    const manifest = createCompiledAgentManifest({
+      agentRoot: AGENT_ROOT,
+      appRoot: APP_ROOT,
+      config: {
+        model: { id: "openai/gpt-5.4", routing: { kind: "gateway", target: "openai" } },
+        name: "sandbox-disabled-agent",
+      },
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+    });
+
+    expect(buildVercelAgentSummary({ manifest }).sandbox).toEqual({
+      logicalPath: "sandbox.ts",
+      status: "disabled",
+    });
   });
 
   it("captures module-backed instructions with their resolved markdown", () => {

@@ -73,8 +73,12 @@ describe("loadAgentInfoData", () => {
 
       expect(data.agent.config.name).toBe(data.manifest.config.name);
       expect(data.manifest.config.name).toBe(manifest.config.name);
-      expect(data.agent.sandbox).not.toBeNull();
-      expect(data.agent.sandbox?.sourceKind).toBe("module");
+      expect(data.agent.sandbox.kind).toBe("configured");
+      expect(
+        data.agent.sandbox.kind === "configured"
+          ? data.agent.sandbox.definition.sourceKind
+          : undefined,
+      ).toBe("module");
       expect(data.schedules).toEqual([]);
     });
   });

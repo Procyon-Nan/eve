@@ -43,7 +43,13 @@ export const ROOT_COMPILED_AGENT_NODE_ID = "__root__";
 /**
  * Current compiled manifest schema version.
  */
-export const COMPILED_AGENT_MANIFEST_VERSION = 39;
+export const COMPILED_AGENT_MANIFEST_VERSION = 40;
+
+/**
+ * Stable discriminator for a sandbox module that explicitly disables
+ * sandbox provisioning for its agent node.
+ */
+export const DISABLED_COMPILED_SANDBOX_KIND = "eve:disabled-sandbox";
 
 /**
  * Compiled channel entry preserved in the compiled manifest.
@@ -154,6 +160,29 @@ export type CompiledScheduleDefinition = z.infer<typeof compiledScheduleDefiniti
  * Normalized authored sandbox metadata preserved in the compiled manifest.
  */
 export type CompiledSandboxDefinition = z.infer<typeof compiledSandboxDefinitionSchema>;
+
+/**
+ * Serializable marker emitted when an authored sandbox module exports
+ * `disableSandbox()`.
+ */
+export interface DisabledCompiledSandboxEntry extends ModuleSourceRef {
+  readonly kind: typeof DISABLED_COMPILED_SANDBOX_KIND;
+}
+
+/**
+ * Compiled sandbox state. `null` remains the unauthored/default state while
+ * this union represents either a configured sandbox or an explicit opt-out.
+ */
+export type CompiledSandboxEntry = CompiledSandboxDefinition | DisabledCompiledSandboxEntry;
+
+/**
+ * Narrows a compiled sandbox entry to the explicit disabled marker.
+ */
+export function isDisabledCompiledSandboxEntry(
+  entry: CompiledSandboxEntry,
+): entry is DisabledCompiledSandboxEntry {
+  return "kind" in entry && entry.kind === DISABLED_COMPILED_SANDBOX_KIND;
+}
 
 /**
  * Compiled sandbox workspace folder preserved in the compiled manifest.
@@ -528,6 +557,21 @@ const compiledSandboxDefinitionSchema = z
   })
   .strict();
 
+const disabledCompiledSandboxEntrySchema: z.ZodType<DisabledCompiledSandboxEntry> = z
+  .object({
+    exportName: z.string().optional(),
+    kind: z.literal(DISABLED_COMPILED_SANDBOX_KIND),
+    logicalPath: z.string(),
+    sourceId: z.string(),
+    sourceKind: z.literal("module"),
+  })
+  .strict();
+
+const compiledSandboxEntrySchema = z.union([
+  compiledSandboxDefinitionSchema,
+  disabledCompiledSandboxEntrySchema,
+]);
+
 const compiledSandboxWorkspaceSchema = z
   .object({
     logicalPath: z.string(),
@@ -670,7 +714,7 @@ const compiledAgentNodeManifestSchema = z
     dynamicTools: z.array(compiledDynamicToolDefinitionSchema).default([]),
     extensionMounts: z.array(compiledExtensionMountSchema).default([]),
     hooks: z.array(compiledHookDefinitionSchema),
-    sandbox: compiledSandboxDefinitionSchema.nullable(),
+    sandbox: compiledSandboxEntrySchema.nullable(),
     sandboxWorkspaces: z.array(compiledSandboxWorkspaceSchema),
     schedules: z.array(compiledScheduleDefinitionSchema),
     remoteAgents: z.array(compiledRemoteAgentNodeSchema),
@@ -760,7 +804,7 @@ export const compiledAgentManifestSchema = z
     hooks: z.array(compiledHookDefinitionSchema),
     kind: z.literal(COMPILED_AGENT_MANIFEST_KIND),
     remoteAgents: z.array(compiledRemoteAgentNodeSchema),
-    sandbox: compiledSandboxDefinitionSchema.nullable(),
+    sandbox: compiledSandboxEntrySchema.nullable(),
     sandboxWorkspaces: z.array(compiledSandboxWorkspaceSchema),
     schedules: z.array(compiledScheduleDefinitionSchema),
     skills: z.array(compiledSkillSourceSchema).readonly(),
@@ -792,7 +836,7 @@ export function createCompiledAgentNodeManifest(input: {
   readonly extensionMounts?: readonly CompiledExtensionMount[];
   readonly hooks?: readonly CompiledHookDefinition[];
   readonly remoteAgents?: readonly CompiledRemoteAgentNode[];
-  readonly sandbox?: CompiledSandboxDefinition | null;
+  readonly sandbox?: CompiledSandboxEntry | null;
   readonly sandboxWorkspaces?: readonly CompiledSandboxWorkspace[];
   readonly schedules?: readonly CompiledScheduleDefinition[];
   readonly skills?: readonly CompiledSkillDefinition[];
@@ -949,7 +993,7 @@ export function createCompiledAgentManifest(input: {
   readonly dynamicTools?: readonly CompiledDynamicToolDefinition[];
   readonly hooks?: readonly CompiledHookDefinition[];
   readonly remoteAgents?: readonly CompiledRemoteAgentNode[];
-  readonly sandbox?: CompiledSandboxDefinition | null;
+  readonly sandbox?: CompiledSandboxEntry | null;
   readonly sandboxWorkspaces?: readonly CompiledSandboxWorkspace[];
   readonly schedules?: readonly CompiledScheduleDefinition[];
   readonly skills?: readonly CompiledSkillDefinition[];

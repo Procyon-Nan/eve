@@ -146,6 +146,21 @@ describe("createCompactionPrompt", () => {
     expect(result.prompt).not.toContain("aGVsbG8=");
   });
 
+  it("stubs legacy image parts instead of reproducing their payload", () => {
+    const base64 = "iVBORw0KGgo".repeat(500);
+    const messages: ModelMessage[] = [
+      {
+        content: [{ image: base64, mediaType: "image/png", type: "image" }],
+        role: "user",
+      },
+    ];
+
+    const result = createCompactionPrompt({ messages, previousCheckpoint: undefined });
+
+    expect(result.prompt).toContain("Attached file attachment (image/png)");
+    expect(result.prompt).not.toContain("iVBORw0KGgo");
+  });
+
   it("renders conversational text verbatim regardless of length", () => {
     // A delegated task message destroyed here is unrecoverable after the first
     // compaction, so user/assistant text must reach the summarizer whole.

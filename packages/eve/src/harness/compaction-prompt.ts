@@ -177,6 +177,8 @@ function renderCompactionContentPart(
       return "";
     case "file":
       return renderAttachedFileStub(part.filename, part.mediaType);
+    case "image":
+      return renderAttachedFileStub(undefined, part.mediaType ?? "image");
     case "tool-call":
       return renderTranscriptToolCall(part, conversationTextLimit);
     case "tool-result":

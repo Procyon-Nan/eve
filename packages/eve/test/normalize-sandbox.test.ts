@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeSandboxDefinition } from "../src/internal/authored-definition/sandbox.js";
+import {
+  normalizeSandboxDefinition,
+  normalizeSandboxEntry,
+} from "../src/internal/authored-definition/sandbox.js";
+import { disableSandbox } from "../src/public/definitions/sandbox.js";
 import { docker } from "../src/public/sandbox/backends/docker.js";
 import { vercel } from "../src/public/sandbox/backends/vercel.js";
 
@@ -172,5 +176,21 @@ describe("normalizeSandboxDefinition", () => {
     // subsequent accesses reuse the cached value
     expect(result.backend?.name).toBe("lazy-test");
     expect(calls).toBe(1);
+  });
+});
+
+describe("normalizeSandboxEntry", () => {
+  it("distinguishes an explicit disabled sentinel from a configured sandbox", () => {
+    expect(normalizeSandboxEntry(disableSandbox(), ERROR_MESSAGE)).toEqual({ kind: "disabled" });
+    expect(normalizeSandboxEntry({}, ERROR_MESSAGE)).toEqual({
+      definition: {},
+      kind: "configured",
+    });
+  });
+
+  it("rejects sentinel-shaped values with extra fields", () => {
+    expect(() =>
+      normalizeSandboxEntry({ kind: "eve:disabled-sandbox", unexpected: true }, ERROR_MESSAGE),
+    ).toThrow(/Unknown key/);
   });
 });

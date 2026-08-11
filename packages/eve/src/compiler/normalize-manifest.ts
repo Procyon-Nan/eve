@@ -8,11 +8,13 @@ import {
   type CompiledDynamicSkillDefinition,
   type CompiledDynamicToolDefinition,
   type CompiledInstructionsDefinition,
+  type CompiledSandboxEntry,
   type CompiledSkillDefinition,
   type CompiledToolDefinition,
   type CompiledWorkflowToolDefinition,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
+  isDisabledCompiledSandboxEntry,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
@@ -233,6 +235,20 @@ async function compileAgentNodeManifest(
             sourceId: staticInstructions[0]?.sourceId ?? "instructions",
             sourceKind: "module",
           };
+  const sandbox =
+    manifest.sandbox === null
+      ? null
+      : await compileSandboxDefinition(manifest.agentRoot, manifest.sandbox, {
+          externalDependencies,
+        });
+
+  assertDisabledSandboxCompatibility({
+    agentId: manifest.agentId,
+    sandbox,
+    sandboxWorkspacePaths: manifest.sandboxWorkspaces.map((workspace) => workspace.logicalPath),
+    dynamicSkillPaths: dynamicSkills.map((skill) => skill.logicalPath),
+    skills,
+  });
 
   return createCompiledAgentNodeManifest({
     agentRoot: manifest.agentRoot,
@@ -248,12 +264,7 @@ async function compileAgentNodeManifest(
     dynamicSkills,
     dynamicTools,
     hooks,
-    sandbox:
-      manifest.sandbox === null
-        ? null
-        : await compileSandboxDefinition(manifest.agentRoot, manifest.sandbox, {
-            externalDependencies,
-          }),
+    sandbox,
     sandboxWorkspaces: manifest.sandboxWorkspaces.map((workspace) => ({
       logicalPath: workspace.logicalPath,
       rootEntries: [...workspace.rootEntries],
@@ -282,6 +293,40 @@ function compileExtensionMounts(manifest: AgentSourceManifest): CompiledExtensio
       mountLogicalPath: mountRef?.logicalPath ?? `extensions/${mount.namespace}`,
     };
   });
+}
+
+function assertDisabledSandboxCompatibility(input: {
+  readonly agentId: string;
+  readonly dynamicSkillPaths: readonly string[];
+  readonly sandbox: CompiledSandboxEntry | null;
+  readonly sandboxWorkspacePaths: readonly string[];
+  readonly skills: readonly CompiledSkillDefinition[];
+}): void {
+  if (input.sandbox === null || !isDisabledCompiledSandboxEntry(input.sandbox)) {
+    return;
+  }
+
+  const conflicts = [
+    ...input.sandboxWorkspacePaths.map((path) => `sandbox workspace "${path}"`),
+    ...input.skills
+      .filter(isSandboxBackedStaticSkill)
+      .map((skill) => `static skill package "${skill.logicalPath}"`),
+    ...input.dynamicSkillPaths.map((path) => `dynamic skill resolver "${path}"`),
+  ];
+  if (conflicts.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Agent "${input.agentId}" exports disableSandbox() from "${input.sandbox.logicalPath}" but also declares Sandbox-backed capabilities: ${conflicts.join(", ")}. Remove those capabilities or configure a sandbox for this agent node.`,
+  );
+}
+
+function isSandboxBackedStaticSkill(skill: CompiledSkillDefinition): boolean {
+  return (
+    skill.sourceKind === "skill-package" ||
+    (skill.files !== undefined && Object.keys(skill.files).length > 0)
+  );
 }
 
 function mergeExternalDependencies(

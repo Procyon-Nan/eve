@@ -17,7 +17,7 @@ const EMPTY_RESOURCE_ROOT: CompiledWorkspaceResourceRoot = {
 describe("createRuntimeSandboxRegistry", () => {
   it("falls back to the framework default sandbox when no authored override is present", () => {
     const registry = createRuntimeSandboxRegistry({
-      authoredSandbox: null,
+      selection: { kind: "default" },
       workspaceResourceRoot: EMPTY_RESOURCE_ROOT,
     });
 
@@ -32,7 +32,7 @@ describe("createRuntimeSandboxRegistry", () => {
     };
 
     const registry = createRuntimeSandboxRegistry({
-      authoredSandbox: null,
+      selection: { kind: "default" },
       workspaceResourceRoot,
     });
 
@@ -47,7 +47,7 @@ describe("createRuntimeSandboxRegistry", () => {
     });
 
     const registry = createRuntimeSandboxRegistry({
-      authoredSandbox,
+      selection: { definition: authoredSandbox, kind: "configured" },
       workspaceResourceRoot: EMPTY_RESOURCE_ROOT,
     });
 
@@ -65,12 +65,28 @@ describe("createRuntimeSandboxRegistry", () => {
     };
 
     const registry = createRuntimeSandboxRegistry({
-      authoredSandbox,
+      selection: { definition: authoredSandbox, kind: "configured" },
       workspaceResourceRoot,
     });
 
     expect(registry.sandbox?.definition).toBe(authoredSandbox);
     expect(registry.sandbox?.workspaceResourceRoot).toBe(workspaceResourceRoot);
+  });
+
+  it("registers no sandbox only for an explicit disabled selection", () => {
+    const registry = createRuntimeSandboxRegistry({
+      selection: {
+        kind: "disabled",
+        source: {
+          logicalPath: "sandbox.ts",
+          sourceId: "sandbox.ts",
+          sourceKind: "module",
+        },
+      },
+      workspaceResourceRoot: EMPTY_RESOURCE_ROOT,
+    });
+
+    expect(registry.sandbox).toBeNull();
   });
 
   it("createFrameworkSandboxDefinition resolves a fresh default backend on each call", () => {

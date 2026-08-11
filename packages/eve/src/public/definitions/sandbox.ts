@@ -27,6 +27,40 @@ export type {
 } from "#shared/sandbox-definition.js";
 
 /**
+ * Stable discriminator carried by {@link DisabledSandboxSentinel}.
+ */
+const DISABLED_SANDBOX_SENTINEL_KIND = "eve:disabled-sandbox";
+
+/**
+ * Marker returned by {@link disableSandbox}. Export it from an agent's
+ * `sandbox.ts` module to opt that agent node out of sandbox provisioning.
+ */
+export interface DisabledSandboxSentinel {
+  readonly kind: typeof DISABLED_SANDBOX_SENTINEL_KIND;
+}
+
+/**
+ * Explicitly disables sandbox provisioning for the agent node that exports
+ * this sentinel from `agent/sandbox.ts` (or the corresponding subagent path).
+ */
+export function disableSandbox(): DisabledSandboxSentinel {
+  return { kind: DISABLED_SANDBOX_SENTINEL_KIND };
+}
+
+/**
+ * Returns whether `value` is the exact sentinel shape produced by
+ * {@link disableSandbox}.
+ */
+export function isDisabledSandboxSentinel(value: unknown): value is DisabledSandboxSentinel {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.keys(value).length === 1 &&
+    (value as { readonly kind?: unknown }).kind === DISABLED_SANDBOX_SENTINEL_KIND
+  );
+}
+
+/**
  * The shape passed to {@link defineSandbox}: a discriminated union over
  * whether a `bootstrap` hook is present. `backend` is optional here (it is
  * required on the shared base): when omitted, eve substitutes

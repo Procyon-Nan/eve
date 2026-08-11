@@ -778,11 +778,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
 
     const userContent = normalizeUserContent(effectiveStepInput?.message);
     if (userContent !== undefined && !pending.deferredMessage && !pending.consumedMessage) {
-      // Staging writes FilePart bytes into the sandbox and replaces
-      // each part's `data` with a compact `eve-sandbox:` URL. The
-      // `messages` array — and everything that flows into
-      // `session.history` from it — therefore never carries raw
-      // attachment bytes across step boundaries.
+      // Enabled sandboxes stage FilePart bytes and replace `data` with a
+      // compact `eve-sandbox:` URL. Explicitly disabled sandboxes preserve
+      // inline payloads so the model and durable history receive the same
+      // direct attachment content without provisioning a backend.
       const content = await stageAttachmentsToSandbox(userContent);
       messages.push({ content, role: "user" });
     }

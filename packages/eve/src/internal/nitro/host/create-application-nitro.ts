@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { createNitro } from "nitro/builder";
 import type { Nitro } from "nitro/types";
+import { isDisabledCompiledSandboxEntry } from "#compiler/manifest.js";
 import { EVE_PACKAGE_NAME } from "#internal/package-name.js";
 import {
   resolvePackageRoot,
@@ -133,7 +134,11 @@ function collectConfiguredSandboxBackendNames(manifest: CompiledAgentManifest): 
   const nodes = [manifest, ...manifest.subagents.map((subagent) => subagent.agent)];
   return new Set(
     nodes
-      .map((node) => node.sandbox?.backendName)
+      .map((node) =>
+        node.sandbox === null || isDisabledCompiledSandboxEntry(node.sandbox)
+          ? undefined
+          : node.sandbox.backendName,
+      )
       .filter((backendName): backendName is string => typeof backendName === "string"),
   );
 }

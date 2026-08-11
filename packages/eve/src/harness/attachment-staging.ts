@@ -152,7 +152,8 @@ export async function hydrateSandboxAttachments(
   const sandbox = await sandboxAccess.get();
   if (sandbox === null) {
     throw new Error(
-      "Cannot hydrate sandbox-ref FilePart: SandboxKey is bound but no active sandbox session is available.",
+      "Cannot hydrate historical eve-sandbox: attachments because this agent has explicitly disabled its sandbox. " +
+        "Re-enable the original sandbox for this agent or start a new session and attach the files again.",
     );
   }
 

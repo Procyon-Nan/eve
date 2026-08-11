@@ -3,7 +3,10 @@
  * `agent/sandbox/sandbox.ts` when paired with a `workspace/` folder).
  */
 export {
+  type DisabledSandboxSentinel,
   defineSandbox,
+  disableSandbox,
+  isDisabledSandboxSentinel,
   type SandboxBootstrapContext,
   type SandboxBootstrapUseFn,
   type SandboxCommandResult,

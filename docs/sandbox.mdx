@@ -3,7 +3,7 @@ title: "Sandbox"
 description: "The agent's isolated bash environment, including built-in file tools, a seeded /workspace, backends, lifecycle, and network policy."
 ---
 
-The sandbox is the agent's isolated bash environment: a filesystem rooted at `/workspace` where it can run shell commands, execute scripts, and read or write files without ever touching your app runtime. Every eve agent has exactly one. The built-in `bash`, `read_file`, `write_file`, `glob`, and `grep` tools already target it, and your authored code can too.
+The sandbox is the agent's isolated bash environment: a filesystem rooted at `/workspace` where it can run shell commands, execute scripts, and read or write files without ever touching your app runtime. eve provides one by default for every agent node. The built-in `bash`, `read_file`, `write_file`, `glob`, and `grep` tools target it, and your authored code can too.
 
 A working sandbox exists by default, with nothing to author. Override it only to add setup, seed files, pick a backend, or lock down the network.
 
@@ -109,6 +109,32 @@ export default defineSandbox({
 ```
 
 `defineSandbox` and `defaultBackend` live on `eve/sandbox`. Omit `backend` and the runtime falls back to `defaultBackend()` (see [Backends](#backends)).
+
+## Disabling the sandbox
+
+An agent that does not need shell commands, workspace files, or Sandbox-backed skills can opt out explicitly:
+
+```ts title="agent/sandbox.ts"
+import { disableSandbox } from "eve/sandbox";
+
+export default disableSandbox();
+```
+
+This is different from omitting the file. No `sandbox.ts` means “use the framework default”; exporting `disableSandbox()` means “register no sandbox for this agent node.” eve then skips backend selection, template prewarm, session creation, and optional `microsandbox` or `just-bash` installation.
+
+With the sandbox disabled:
+
+- Inline image and PDF `FilePart`s remain in the message and go directly to the configured model. eve does not write another copy or replace the payload with an `eve-sandbox:` URL.
+- `bash`, `read_file`, `write_file`, `glob`, and `grep` are not exposed. Plain static skills containing only compiled instructions remain available through `load_skill`; packaged skills, inline skill files, and dynamic skills require a sandbox and are rejected during compilation.
+- `agent/sandbox/workspace/**` is a compile-time conflict.
+- `ctx.getSandbox()` and file reads through `ctx.getSkill()` are unavailable. Configure a sandbox before using those APIs.
+- Ordinary authored and dynamic tools, `ask_question`, and subagent delegation remain available when they do not call Sandbox APIs.
+
+The choice is node-local. A declared subagent does not inherit its parent's disabled state: give each subagent its own `sandbox.ts` if it should also opt out. Root-agent copies created by the built-in `agent` capability share the root configuration.
+
+Disabling a sandbox does not weaken a channel's MIME type, size, authentication, or upload policy. It changes only what eve does after the channel has accepted a file.
+
+Historical messages may already contain `eve-sandbox:` references. A disabled agent cannot read those references and fails with an instruction to re-enable the original sandbox or start a new session and attach the files again; opting out never starts a sandbox solely for historical compatibility.
 
 ## Backends
 
