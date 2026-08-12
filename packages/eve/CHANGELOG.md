@@ -1,5 +1,11 @@
 # eve
 
+## 0.31.2-baigong.1
+
+### Patch Changes
+
+- Exclude application data and CodeGraph index directories from development runtime snapshots and authored-source watching, preventing large generated state from delaying startup or triggering rebuilds.
+
 ## 0.31.2-baigong.0
 
 ### Patch Changes

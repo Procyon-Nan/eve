@@ -38,6 +38,7 @@
     "bright-files-opt-out",
     "calm-tools-project-output",
     "quiet-conversations-recover",
+    "quiet-data-directories",
     "steady-subagents-lineage",
     "warm-subagents-delegate"
   ]

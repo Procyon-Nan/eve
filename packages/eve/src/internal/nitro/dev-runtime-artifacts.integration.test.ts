@@ -235,6 +235,8 @@ describe("development runtime artifact snapshots", () => {
     const manifestPath = join(compileDirectoryPath, "compiled-agent-manifest.json");
 
     await mkdir(agentRoot, { recursive: true });
+    await mkdir(join(appRoot, ".codegraph"), { recursive: true });
+    await mkdir(join(appRoot, ".data", "eve-workflows"), { recursive: true });
     await mkdir(join(appRoot, ".devtools"), { recursive: true });
     await mkdir(join(appRoot, "node_modules", "heavy-package"), { recursive: true });
     await mkdir(join(appRoot, ".next", "cache"), { recursive: true });
@@ -249,6 +251,8 @@ describe("development runtime artifact snapshots", () => {
     await writeFile(join(appRoot, ".env.example"), "SECRET=example\n");
     await writeFile(join(appRoot, "package.json"), '{"type":"module"}\n');
     await writeFile(join(agentRoot, "agent.ts"), "export const answer = 42;\n");
+    await writeFile(join(appRoot, ".codegraph", "codegraph.db"), "index\n");
+    await writeFile(join(appRoot, ".data", "eve-workflows", "events.bin"), "events\n");
     await writeFile(join(appRoot, ".devtools", "generations.json"), "{}\n");
     await writeFile(join(appRoot, "node_modules", "heavy-package", "index.js"), "export {}\n");
     await writeFile(join(appRoot, ".next", "cache", "webpack.bin"), "cache\n");
@@ -265,6 +269,8 @@ describe("development runtime artifact snapshots", () => {
     } as CompileAgentResult);
 
     expect(existsSync(join(snapshot.runtimeAppRoot, "agent", "agent.ts"))).toBe(true);
+    expect(existsSync(join(snapshot.runtimeAppRoot, ".codegraph"))).toBe(false);
+    expect(existsSync(join(snapshot.runtimeAppRoot, ".data"))).toBe(false);
     expect(existsSync(join(snapshot.runtimeAppRoot, ".devtools"))).toBe(false);
     expect(existsSync(join(snapshot.runtimeAppRoot, "node_modules"))).toBe(false);
     expect(existsSync(join(snapshot.runtimeAppRoot, ".env"))).toBe(false);

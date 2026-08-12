@@ -131,6 +131,8 @@ describe("startAuthoredSourceWatcher", () => {
 
     try {
       const ignored = getIgnoredPredicate();
+      expect(ignored(join(host.appRoot, ".codegraph", "codegraph.db"))).toBe(true);
+      expect(ignored(join(host.appRoot, ".data", "eve-workflows", "events.bin"))).toBe(true);
       expect(ignored(join(host.appRoot, ".devtools", "generations.json"))).toBe(true);
       expect(ignored(join(host.appRoot, ".eve", "dev-hosts", "candidate"))).toBe(true);
       expect(ignored(join(host.appRoot, "node_modules", "eve"))).toBe(true);
