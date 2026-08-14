@@ -28,6 +28,7 @@
 import { ChannelRequestIdKey } from "#context/keys.js";
 import type { EveAttributeValue } from "#runtime/attributes/normalize.js";
 import { isNonEmptyString } from "#shared/guards.js";
+import { HOST_RUNTIME_ACCEPTANCE_ATTRIBUTE } from "#shared/host-runtime.js";
 
 /**
  * Active compiled graph node id for the session's agent. Returned by
@@ -208,6 +209,7 @@ export function buildSessionAttributes(input: {
   readonly serializedContext: Record<string, unknown>;
 }): Record<string, EveAttributeValue> {
   return {
+    [HOST_RUNTIME_ACCEPTANCE_ATTRIBUTE]: readHostRuntimeAcceptanceKey(input.serializedContext),
     "$eve.channel_request_id": readChannelRequestId(input.serializedContext),
     "$eve.type": "session",
     "$eve.trigger": readChannelKind(input.serializedContext),
@@ -258,11 +260,26 @@ export function buildTurnAttributes(input: {
   readonly parentSessionId: string;
   readonly requestId?: string;
   readonly rootSessionId: string;
+  readonly serializedContext?: Record<string, unknown>;
 }): Record<string, EveAttributeValue> {
   return {
+    [HOST_RUNTIME_ACCEPTANCE_ATTRIBUTE]: readHostRuntimeAcceptanceKey(
+      input.serializedContext ?? {},
+    ),
     "$eve.channel_request_id": input.requestId,
     "$eve.type": "turn",
     "$eve.parent": input.parentSessionId,
     "$eve.root": input.rootSessionId,
   };
+}
+
+function readHostRuntimeAcceptanceKey(
+  serializedContext: Record<string, unknown>,
+): string | undefined {
+  const hostRuntime = serializedContext["eve.hostRuntime"] as
+    | { readonly acceptanceKey?: unknown; readonly ownership?: unknown }
+    | undefined;
+  return hostRuntime?.ownership === "root" && isNonEmptyString(hostRuntime.acceptanceKey)
+    ? hostRuntime.acceptanceKey
+    : undefined;
 }

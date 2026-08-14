@@ -1,5 +1,11 @@
 # eve
 
+## 0.31.2-baigong.2
+
+### Patch Changes
+
+- Add opaque host runtime references for trusted server integrations. Root Turns and authorized one-shot specialists can resolve one host-owned model, instruction, tool, timeout, and delegation snapshot, with durable acceptance receipts, deterministic failure isolation, and idempotent lifecycle release callbacks.
+
 ## 0.31.2-baigong.1
 
 ### Patch Changes

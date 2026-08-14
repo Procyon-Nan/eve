@@ -7,6 +7,7 @@ import {
   type DynamicResolveContext,
   type DynamicSentinel,
 } from "#shared/dynamic-tool-definition.js";
+import type { HostRuntimeDefinition } from "#shared/host-runtime.js";
 
 /**
  * Optional overrides that eve forwards to the AI SDK model runtime call for
@@ -319,4 +320,16 @@ export type PublicAgentDefinition = {
    * per-message output schema.
    */
   readonly outputSchema?: StandardJSONSchemaV1<unknown, unknown> | JsonObject;
+};
+
+/** Dynamic local specialist whose complete runtime is supplied by its host. */
+export type PublicHostRuntimeAgentDefinition = Omit<
+  PublicAgentDefinition,
+  "compaction" | "model" | "modelContextWindowTokens" | "modelOptions"
+> & {
+  readonly compaction?: Omit<PublicAgentCompactionDefinition, "model" | "modelContextWindowTokens">;
+  readonly model?: never;
+  readonly modelContextWindowTokens?: never;
+  readonly modelOptions?: never;
+  readonly runtime: HostRuntimeDefinition;
 };

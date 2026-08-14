@@ -21,6 +21,7 @@ import {
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
 } from "#context/keys.js";
+import { prepareHostRuntimePreflightAtStepBoundary } from "#runtime/host-runtime/preflight.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { runStep } from "#context/run-step.js";
 import { deserializeContext, serializeContext } from "#context/serialize.js";
@@ -43,6 +44,7 @@ import { getTurnUsageState, takeSessionUsageDelta, toUsage } from "#harness/turn
 import type { TokenUsage } from "#shared/token-usage.js";
 import type { JsonObject } from "#shared/json.js";
 import type { RunMode } from "#shared/run-mode.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import {
   createAuthorizationCompletedEvent,
@@ -158,6 +160,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
+  const hostRuntime = await prepareHostRuntimePreflightAtStepBoundary(ctx);
   const adapter = ctx.require(ChannelKey);
   const bundle = ctx.require(BundleKey);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
@@ -446,6 +449,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           createRuntime: createWorkflowRuntime,
           handleEvent,
           mode,
+          modelCallTimeoutMs: hostRuntime?.modelCallTimeoutMs,
           modelResolutionScope: {
             moduleMap: bundle.moduleMap,
             nodeId: bundle.nodeId,
@@ -644,6 +648,7 @@ export type RoutedDeliverResult =
  */
 export async function routeProxiedDeliverStep(input: {
   readonly auth?: SessionAuthContext | null;
+  readonly hostRuntime?: DurableHostRuntimeContext;
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly payload: DeliverPayload;
   readonly sessionState: DurableSessionState;
@@ -659,9 +664,24 @@ export async function routeProxiedDeliverStep(input: {
   for (const forChild of routed.forChildren) {
     // Children are pinned to their own deployments, so proxied deliveries
     // must cross this hook in the same durable envelope as channel sends.
+    const inheritedHostRuntime =
+      forChild.inheritedHostRuntimeParent !== undefined &&
+      input.hostRuntime?.ownership === "root" &&
+      input.hostRuntime.releasedOutcome === undefined
+        ? {
+            ownership: "inherited" as const,
+            parent: forChild.inheritedHostRuntimeParent,
+            reference: input.hostRuntime.reference,
+          }
+        : undefined;
     await resumeHook(
       forChild.childContinuationToken,
-      sendCommandToDelivery({ auth: input.auth, kind: "send", payload: forChild.payload }),
+      sendCommandToDelivery({
+        auth: input.auth,
+        hostRuntime: inheritedHostRuntime,
+        kind: "send",
+        payload: forChild.payload,
+      }),
     );
   }
 
@@ -684,6 +704,7 @@ export async function dispatchTurnStep(
           parentSessionId: input.sessionState.sessionId,
           requestId: input.delivery.kind === "deliver" ? input.delivery.requestId : undefined,
           rootSessionId: readRootSessionId(input.serializedContext) ?? input.sessionState.sessionId,
+          serializedContext: input.serializedContext,
         }),
       ),
     },

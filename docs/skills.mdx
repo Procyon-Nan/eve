@@ -78,6 +78,8 @@ The handle exposes the skill's `name` and `file(relativePath)`; file content is 
 
 To serve a different skill per principal, tenant, or channel (the caller's own team playbook, say), wrap `defineSkill` in a `defineDynamic` resolver keyed on `ctx.session.auth`. See [Dynamic capabilities](./guides/dynamic-capabilities).
 
+Host runtime snapshots do not change these sandbox rules. If a host-backed agent disables its sandbox, provide database-backed skill discovery and loading as ordinary tools from `hostRuntimeTools`; do not return a dynamic `SkillPackageDefinition`. The host can lock the skill version alongside the model and instructions while its tool implements the model-visible loading contract.
+
 ## What to read next
 
 - [Connections](./connections): add tools from external MCP and OpenAPI servers

@@ -29,6 +29,14 @@ import { sessionCommandHookToken } from "#execution/session-command-token.js";
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: vi.fn(),
+  FatalError: {
+    is: vi.fn(
+      (value: unknown) =>
+        typeof value === "object" &&
+        value !== null &&
+        (value as { fatal?: unknown }).fatal === true,
+    ),
+  },
   getWorkflowMetadata: vi.fn(() => ({
     url: "https://eve.example.com",
     workflowRunId: "wrun_test_123",
@@ -71,7 +79,9 @@ vi.mock("./delegated-parent-notification.js", () => ({
 }));
 
 vi.mock("./terminate-child-sessions-step.js", () => ({
-  terminateChildSessionsStep: vi.fn().mockResolvedValue(undefined),
+  terminateChildSessionsStep: vi.fn(
+    async ({ sessionState }: { sessionState: DurableSessionState }) => sessionState,
+  ),
 }));
 
 vi.mock("./workflow-steps.js", () => ({

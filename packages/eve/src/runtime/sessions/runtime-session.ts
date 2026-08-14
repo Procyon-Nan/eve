@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { BundledCompiledArtifacts } from "#runtime/loaders/bundled-artifacts.js";
 import type { CompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
+import type { HostRuntimeAcceptanceStatus, HostRuntimeProvider } from "#shared/host-runtime.js";
 
 /**
  * Process-scoped container for mutable runtime state owned by one eve
@@ -33,6 +34,10 @@ export interface RuntimeSession {
    * changes.
    */
   readonly bundleCacheKeyBySourceKey: Map<string, string>;
+  /** Host-owned runtime providers installed for this deployment process. */
+  readonly hostRuntimeProviders: Map<string, HostRuntimeProvider>;
+  /** Fast-path acceptance receipts; durable lookup falls back to the Workflow World. */
+  readonly hostRuntimeAcceptance: Map<string, HostRuntimeAcceptanceStatus | "INDETERMINATE">;
 }
 
 /**
@@ -43,6 +48,8 @@ export function createRuntimeSession(id: string = "test-session"): RuntimeSessio
     bundleCache: new Map(),
     bundleCacheKeyBySourceKey: new Map(),
     compiledArtifacts: null,
+    hostRuntimeAcceptance: new Map(),
+    hostRuntimeProviders: new Map(),
     id,
   };
 }

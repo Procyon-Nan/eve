@@ -4,7 +4,7 @@ import { callAdapterEventHandler, type ChannelAdapterContext } from "#channel/ad
 import { buildSessionHandle } from "#channel/session.js";
 import { type SubagentAdapterState } from "#execution/subagent-adapter-state.js";
 import { ContextContainer } from "#context/container.js";
-import { ContinuationTokenKey, SessionIdKey } from "#context/keys.js";
+import { ContinuationTokenKey, HostRuntimeContextKey, SessionIdKey } from "#context/keys.js";
 import type { InputRequest } from "#runtime/input/types.js";
 import { SUBAGENT_ADAPTER } from "#execution/subagent-adapter.js";
 
@@ -166,6 +166,33 @@ describe("SUBAGENT_ADAPTER input.requested handler", () => {
       },
       kind: "subagent-input-request",
       subagentName: "linear",
+    });
+  });
+
+  it("forwards inherited host-runtime lineage for a later HITL rollover", async () => {
+    resumeHookMock.mockClear();
+    const ctx = makeContext();
+    const parent = {
+      callId: "call-123",
+      rootSessionId: "root-session",
+      sessionId: "parent-session",
+      subagentName: "agent",
+      turnId: "turn-parent",
+    } as const;
+    ctx.ctx.set(HostRuntimeContextKey, {
+      ownership: "inherited",
+      parent,
+      reference: { providerKind: "baigong-agent", value: "root-reference" },
+    });
+
+    await SUBAGENT_INPUT_REQUESTED(
+      { requests: [sampleRequest()], sequence: 0, stepIndex: 1, turnId: "turn-0" },
+      ctx,
+    );
+
+    expect(resumeHookMock.mock.calls[0]?.[1]).toMatchObject({
+      inheritedHostRuntimeParent: parent,
+      kind: "subagent-input-request",
     });
   });
 

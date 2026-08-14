@@ -16,6 +16,7 @@ import {
   resolveRuntimeModelReference,
   type RuntimeModelResolutionScope,
 } from "#runtime/agent/resolve-model.js";
+import { runtimeModelReferenceId } from "#runtime/agent/bootstrap.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import {
   AGENT_TOOL_DESCRIPTION,
@@ -71,6 +72,8 @@ export interface CreateExecutionNodeStepInput {
   readonly createRuntime: CreateRuntime;
   readonly handleEvent?: HandleEventFn;
   readonly mode: RunMode;
+  /** Host-supplied deadline applied to each individual model request only. */
+  readonly modelCallTimeoutMs?: number;
   readonly modelResolutionScope: RuntimeModelResolutionScope;
   readonly node: ResolvedRuntimeAgentNode;
   /** Local subagent parent lineage forwarded to the harness preamble. */
@@ -108,6 +111,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     handleEvent: input.handleEvent,
     instrumentation,
     mode: input.mode,
+    modelCallTimeoutMs: input.modelCallTimeoutMs,
     onCompaction: preserveFrameworkStateOnCompaction,
     persistentSubagentSessions:
       input.node.agent.config?.experimental?.subagentPersistentSessions === true,
@@ -140,8 +144,8 @@ export function buildRuntimeIdentity(node: ResolvedRuntimeAgentNode): RuntimeIde
     eveVersion: packageInfo.version,
     modelId:
       node.turnAgent.dynamicModel === undefined
-        ? node.turnAgent.model.id
-        : `dynamic:${node.turnAgent.model.id}`,
+        ? runtimeModelReferenceId(node.turnAgent.model)
+        : `dynamic:${runtimeModelReferenceId(node.turnAgent.model)}`,
   };
 
   const gitSha = process.env.VERCEL_GIT_COMMIT_SHA?.trim();

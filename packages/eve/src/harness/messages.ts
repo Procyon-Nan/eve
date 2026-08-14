@@ -3,6 +3,7 @@ import type { ModelMessage, TextPart, UserContent } from "ai";
 import type { DeliverPayload, SessionAuthContext, TurnCaller } from "#channel/types.js";
 import type { InputResponse } from "#runtime/input/types.js";
 import type { StepInput } from "#harness/types.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 /**
  * Merges two {@link StepInput} values into one.
@@ -216,6 +217,7 @@ function toUserContentArray(value: string | UserContent): UserContentArray {
 interface DeliverLike {
   readonly auth?: SessionAuthContext | null;
   readonly caller?: TurnCaller;
+  readonly hostRuntime?: DurableHostRuntimeContext;
   readonly kind: "deliver";
   readonly payloads: readonly DeliverPayload[];
 }
@@ -239,6 +241,7 @@ export function coalesceDeliveries<T extends DeliverLike>(items: readonly T[]): 
 
   let auth = first.auth;
   let caller = first.caller;
+  let hostRuntime = first.hostRuntime;
   const payloads = [...first.payloads];
 
   for (const item of rest) {
@@ -251,8 +254,11 @@ export function coalesceDeliveries<T extends DeliverLike>(items: readonly T[]): 
       }
       caller = item.caller;
     }
+    if (item.hostRuntime !== undefined) {
+      hostRuntime = item.hostRuntime;
+    }
     payloads.push(...item.payloads);
   }
 
-  return { ...first, auth, caller, payloads };
+  return { ...first, auth, caller, hostRuntime, payloads };
 }

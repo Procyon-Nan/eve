@@ -24,8 +24,14 @@ import {
   type TurnCancellationControl,
 } from "#execution/turn-cancellation-control.js";
 import { TurnExecutionCursor } from "#execution/turn-execution-cursor.js";
+import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { resolveWorkflowCallbackBaseUrl } from "#execution/workflow-callback-url.js";
 import { normalizeSerializableError } from "#execution/workflow-errors.js";
+import { releaseHostRuntimeStep } from "#execution/host-runtime-release-step.js";
+import { readActiveRootHostRuntime } from "#execution/host-runtime-context.js";
+import { installTurnHostRuntimeStep } from "#execution/host-runtime-context-step.js";
+import { settleHostRuntimeReleasesStep } from "#execution/settle-host-runtime-releases-step.js";
+import { PENDING_HOST_RUNTIME_RELEASES_STATE_KEY } from "#harness/host-runtime-releases.js";
 import { turnStep } from "#execution/workflow-steps.js";
 import { activeTurnId } from "#harness/active-turn-id.js";
 import { resolveRuntimeActionResultsForKeys } from "#runtime/actions/results.js";
@@ -97,7 +103,15 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
     }
 
     while (true) {
-      const result = await turnStep(cursor.createStepInput(nextStepInput, cancellation?.signal));
+      let result = await turnStep(cursor.createStepInput(nextStepInput, cancellation?.signal));
+      if (hasPendingHostRuntimeReleases(result.sessionState)) {
+        result = {
+          ...result,
+          sessionState: await settleHostRuntimeReleasesStep({
+            sessionState: result.sessionState,
+          }),
+        };
+      }
       const pendingActionKeys =
         result.action === "dispatch-workflow-runtime-actions" || result.action === "park"
           ? result.pendingRuntimeActionKeys
@@ -160,6 +174,13 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
           sessionState: cursor.sessionState,
         });
         await cursor.adopt(dispatchResult);
+        if (hasPendingHostRuntimeReleases(cursor.sessionState)) {
+          await cursor.adopt({
+            sessionState: await settleHostRuntimeReleasesStep({
+              sessionState: cursor.sessionState,
+            }),
+          });
+        }
 
         const results = await waitForRuntimeActionResults({
           bufferedDeliveries,
@@ -340,6 +361,19 @@ async function waitForRuntimeActionResults(input: {
         sessionState: input.cursor.sessionState,
       });
       await input.cursor.adopt(proxyResult);
+      if (
+        value.kind === "subagent-input-request" &&
+        ownsRootHostRuntime(input.cursor.serializedContext)
+      ) {
+        await input.cursor.adopt({
+          serializedContext: await releaseHostRuntimeStep({
+            outcome: "completed",
+            ownership: "root",
+            serializedContext: input.cursor.serializedContext,
+          }),
+          sessionState: input.cursor.sessionState,
+        });
+      }
       continue;
     }
 
@@ -351,8 +385,22 @@ async function waitForRuntimeActionResults(input: {
       await input.cursor.send({ kind: "turn-delivery-accepted", requestId: value.requestId });
       pendingDeliveryRequest = undefined;
 
+      if (
+        value.delivery.hostRuntime !== undefined ||
+        ownsTurnHostRuntime(input.cursor.serializedContext)
+      ) {
+        await input.cursor.adopt({
+          serializedContext: await installTurnHostRuntimeStep({
+            hostRuntime: value.delivery.hostRuntime,
+            serializedContext: input.cursor.serializedContext,
+          }),
+          sessionState: input.cursor.sessionState,
+        });
+      }
+
       const routed = await routeDeliverToChildren({
         auth: value.delivery.auth,
+        hostRuntime: readActiveRootHostRuntime(input.cursor.serializedContext),
         parentWritable: input.cursor.parentWritable,
         payloads: value.delivery.payloads,
         sessionState: input.cursor.sessionState,
@@ -365,6 +413,25 @@ async function waitForRuntimeActionResults(input: {
       }
     }
   }
+}
+
+function ownsRootHostRuntime(serializedContext: Record<string, unknown>): boolean {
+  const hostRuntime = serializedContext["eve.hostRuntime"] as
+    | { readonly ownership?: unknown }
+    | undefined;
+  return hostRuntime?.ownership === "root";
+}
+
+function ownsTurnHostRuntime(serializedContext: Record<string, unknown>): boolean {
+  const hostRuntime = serializedContext["eve.hostRuntime"] as
+    | { readonly ownership?: unknown }
+    | undefined;
+  return hostRuntime?.ownership === "root" || hostRuntime?.ownership === "inherited";
+}
+
+function hasPendingHostRuntimeReleases(sessionState: DurableSessionState): boolean {
+  const pending = sessionState.snapshot?.session.state?.[PENDING_HOST_RUNTIME_RELEASES_STATE_KEY];
+  return Array.isArray(pending) && pending.length > 0;
 }
 
 async function runLegacyTurnWorkflow(input: TurnWorkflowInput): Promise<void> {

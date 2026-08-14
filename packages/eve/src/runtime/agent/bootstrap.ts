@@ -6,6 +6,7 @@ import type { WorkspaceRuntimeSpec } from "#runtime/workspace/types.js";
 import type { InternalAgentModelDefinition } from "#shared/agent-definition.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
 import type { AvailableSkillDescription } from "#execution/skills/instructions.js";
+import type { HostRuntimeReference } from "#shared/host-runtime.js";
 
 /**
  * Fixed internal model reference used only by the framework-owned bootstrap
@@ -16,7 +17,28 @@ export const BOOTSTRAP_RUNTIME_MODEL_ID = "eve-bootstrap-model";
 /**
  * Runtime-owned model identifier prepared for one harness turn.
  */
-export type RuntimeModelReference = Readonly<InternalAgentModelDefinition>;
+export type ExistingRuntimeModelReference = Readonly<InternalAgentModelDefinition>;
+
+export type RuntimeModelReference =
+  | ExistingRuntimeModelReference
+  | {
+      readonly id: string;
+      readonly providerOptions?: undefined;
+      readonly source?: undefined;
+      readonly type: "host-runtime";
+      readonly reference: HostRuntimeReference;
+      readonly contextWindowTokens?: number;
+    };
+
+export function isHostRuntimeModelReference(
+  reference: RuntimeModelReference,
+): reference is Extract<RuntimeModelReference, { readonly type: "host-runtime" }> {
+  return "type" in reference && reference.type === "host-runtime";
+}
+
+export function runtimeModelReferenceId(reference: RuntimeModelReference): string {
+  return reference.id;
+}
 
 /**
  * Runtime-owned reference to a dynamic model resolver authored in `agent.ts`.

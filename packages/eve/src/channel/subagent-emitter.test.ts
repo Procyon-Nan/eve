@@ -5,10 +5,10 @@ import {
 } from "#runtime/channels/registry.js";
 import type { ChannelAdapter } from "#channel/adapter.js";
 import { SUBAGENT_ADAPTER_KIND } from "#execution/subagent-adapter-state.js";
+import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 
 describe("subagent adapter", () => {
   it("round-trips durable delegation metadata through the ChannelKey codec", async () => {
-    const { ChannelKey } = await import("#runtime/sessions/runtime-context-keys.js");
     const codec = ChannelKey.codec;
 
     if (codec === undefined) {

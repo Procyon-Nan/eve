@@ -817,7 +817,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const attributionHeaders = buildGatewayAttributionHeaders(model, config.runtimeIdentity);
 
     ({ messages, session } = await maybeCompact({
-      abortSignal: config.abortSignal,
+      abortSignal: modelRequestAbortSignal(config.abortSignal, config.modelCallTimeoutMs),
       emit,
       emissionState,
       messages,
@@ -1078,6 +1078,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const agent = new ToolLoopAgent(agentSettings);
 
       const executeModelCall = async (): Promise<HarnessStepResult> => {
+        const modelAbortSignal = modelRequestAbortSignal(
+          config.abortSignal,
+          config.modelCallTimeoutMs,
+        );
         if (emit) {
           const hiddenRuntimeActionToolNames = [...config.tools]
             .filter(
@@ -1091,7 +1095,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             ...hiddenRuntimeActionToolNames,
           ]);
           const streamResult = await agent.stream({
-            abortSignal: config.abortSignal,
+            abortSignal: modelAbortSignal,
             messages: callMessages,
           });
           const {
@@ -1142,7 +1146,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           });
         }
         const generateResult = await agent.generate({
-          abortSignal: config.abortSignal,
+          abortSignal: modelAbortSignal,
           messages: callMessages,
         });
         throwIfTurnAborted(config.abortSignal);
@@ -1493,6 +1497,15 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
   }
 
   return runStep;
+}
+
+function modelRequestAbortSignal(
+  caller: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): AbortSignal | undefined {
+  if (timeoutMs === undefined) return caller;
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return caller === undefined ? timeout : AbortSignal.any([caller, timeout]);
 }
 
 function extractTokenUsageDelta(input: {

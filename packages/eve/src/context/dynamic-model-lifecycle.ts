@@ -24,6 +24,8 @@ import {
 } from "#runtime/agent/resolve-model.js";
 import { toErrorMessage } from "#shared/errors.js";
 import type { DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { throwHostRuntimeAtStepBoundary } from "#runtime/host-runtime/preflight.js";
 
 const log = createLogger("dynamic-models");
 
@@ -120,6 +122,9 @@ export async function dispatchDynamicModelEvent(input: {
 
     setSelectionForEvent(input.ctx, input.event.type, selection);
   } catch (error) {
+    if (isHostRuntimeError(error)) {
+      throwHostRuntimeAtStepBoundary(error);
+    }
     log.error(`Dynamic model resolver (${input.event.type}) threw - skipping.`, {
       error: toErrorMessage(error),
     });

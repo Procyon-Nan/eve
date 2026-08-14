@@ -7,8 +7,14 @@ import {
   getDynamicSubagentSelection,
   refreshDynamicSessionSubagentsForRuntimeRevision,
 } from "#context/dynamic-subagent-lifecycle.js";
-import { SessionDynamicSubagentRuntimeRevisionKey, SessionIdKey } from "#context/keys.js";
-import { defineAgent } from "#public/definitions/agent.js";
+import {
+  HostRuntimeContextKey,
+  HostRuntimePreflightKey,
+  ParentSessionKey,
+  SessionDynamicSubagentRuntimeRevisionKey,
+  SessionIdKey,
+} from "#context/keys.js";
+import { defineAgent, defineHostRuntime } from "#public/definitions/agent.js";
 import { defineRemoteAgent } from "#public/definitions/remote-agent.js";
 import { createSessionStartedEvent, createTurnStartedEvent } from "#protocol/message.js";
 import type { ResolvedDynamicSubagentResolver } from "#runtime/subagents/registry.js";
@@ -124,7 +130,7 @@ describe("dynamic subagent lifecycle", () => {
     const sessionSelection = getDynamicSubagentSelection(ctx, resolver.nodeId);
     expect(sessionSelection?.kind).toBe("subagent");
     expect(
-      sessionSelection?.kind === "subagent" ? sessionSelection.agentConfig.model.id : null,
+      sessionSelection?.kind === "subagent" ? sessionSelection.agentConfig.model?.id : null,
     ).toBe("anthropic/claude-sonnet-4.5");
 
     await dispatchDynamicSubagentEvent({
@@ -256,7 +262,112 @@ describe("dynamic subagent lifecycle", () => {
     expect(ctx.get(SessionDynamicSubagentRuntimeRevisionKey)).toBe("deployment:one");
     expect(buildDynamicSubagentTools(ctx)).toHaveLength(1);
   });
+
+  it("does not execute an unauthorized host-runtime resolver", async () => {
+    const ctx = createHostRuntimeContext([]);
+    const handler = vi.fn(() =>
+      defineAgent({
+        description: "Review the request.",
+        runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+      }),
+    );
+    const resolver = createHostRuntimeResolver(handler);
+
+    await dispatchDynamicSubagentEvent({
+      ctx,
+      event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
+      messages: [],
+      persistentSessions: false,
+      resolvers: [resolver],
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toBeUndefined();
+  });
+
+  it("keeps ordinary dynamic subagents compatible in a host-runtime session", async () => {
+    const ctx = createHostRuntimeContext([]);
+    const created = createResolver({ eventNames: ["turn.started"] });
+    const handler = vi.fn(() => created.agentConfig);
+    const resolver = { ...created.resolver, events: { "turn.started": handler } };
+
+    await dispatchDynamicSubagentEvent({
+      ctx,
+      event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
+      messages: [],
+      persistentSessions: false,
+      resolvers: [resolver],
+    });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toBeDefined();
+  });
+
+  it("authorizes a host-runtime resolver only for a top-level root turn", async () => {
+    const ctx = createHostRuntimeContext(["researcher"]);
+    const handler = vi.fn(() =>
+      defineAgent({
+        description: "Review the request.",
+        runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+      }),
+    );
+    const resolver = createHostRuntimeResolver(handler);
+
+    await dispatchDynamicSubagentEvent({
+      ctx,
+      event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
+      messages: [],
+      persistentSessions: false,
+      resolvers: [resolver],
+    });
+    expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toBeDefined();
+
+    ctx.set(ParentSessionKey, {
+      callId: "call-1",
+      rootSessionId: "root-session",
+      sessionId: "root-session",
+      turn: { id: "turn-1", sequence: 0 },
+    });
+    await dispatchDynamicSubagentEvent({
+      ctx,
+      event: createTurnStartedEvent({ sequence: 1, turnId: "turn-2" }),
+      messages: [],
+      persistentSessions: false,
+      resolvers: [resolver],
+    });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toBeUndefined();
+  });
 });
+
+function createHostRuntimeContext(delegatedSubagentNames: readonly string[]): ContextContainer {
+  const ctx = createContext();
+  ctx.set(HostRuntimeContextKey, {
+    ownership: "root",
+    reference: { providerKind: "baigong-agent", value: "opaque" },
+  });
+  ctx.set(HostRuntimePreflightKey, {
+    delegatedSubagentNames,
+    model: {} as never,
+    modelId: "host-model",
+  });
+  return ctx;
+}
+
+function createHostRuntimeResolver(handler: () => unknown): ResolvedDynamicSubagentResolver {
+  return {
+    eventNames: ["turn.started"],
+    events: { "turn.started": handler },
+    kind: "subagent",
+    logicalPath: "agent.ts",
+    name: "researcher",
+    nodeId: "subagents/researcher",
+    runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+    sourceId: "agent.ts",
+    sourceKind: "module",
+  };
+}
 
 function createContext(): ContextContainer {
   const ctx = new ContextContainer();

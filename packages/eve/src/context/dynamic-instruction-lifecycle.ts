@@ -13,6 +13,8 @@ import type { ContextContainer } from "#context/container.js";
 import type { ContextKey } from "#context/key.js";
 import { SessionDynamicInstructionsKey, TurnDynamicInstructionsKey } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { throwHostRuntimeAtStepBoundary } from "#runtime/host-runtime/preflight.js";
 
 const log = createLogger("dynamic-instructions");
 
@@ -96,6 +98,9 @@ export async function dispatchDynamicInstructionEvent(input: {
 
   for (const outcome of outcomes) {
     if (outcome.status === "rejected") {
+      if (isHostRuntimeError(outcome.reason)) {
+        throwHostRuntimeAtStepBoundary(outcome.reason);
+      }
       log.error(`Dynamic instructions resolver (${event.type}) threw — skipping.`, {
         error: toErrorMessage(outcome.reason),
       });

@@ -6,7 +6,7 @@ import type {
   SubagentAuthorizationEventHookPayload,
   SubagentInputRequestHookPayload,
 } from "#channel/types.js";
-import { ContinuationTokenKey, SessionIdKey } from "#context/keys.js";
+import { ContinuationTokenKey, HostRuntimeContextKey, SessionIdKey } from "#context/keys.js";
 import {
   SUBAGENT_ADAPTER_KIND,
   isSubagentAdapterState,
@@ -37,6 +37,7 @@ export const SUBAGENT_ADAPTER: ChannelAdapter = {
       return;
     }
 
+    const hostRuntime = ctx.ctx.get(HostRuntimeContextKey);
     const hookPayload: SubagentInputRequestHookPayload = {
       callId: state.callId,
       childContinuationToken: ctx.ctx.require(ContinuationTokenKey),
@@ -47,6 +48,9 @@ export const SUBAGENT_ADAPTER: ChannelAdapter = {
         stepIndex: data.stepIndex,
         turnId: data.turnId,
       },
+      ...(hostRuntime?.ownership === "inherited" && hostRuntime.parent !== undefined
+        ? { inheritedHostRuntimeParent: hostRuntime.parent }
+        : {}),
       kind: "subagent-input-request",
       subagentName: state.subagentName,
     };

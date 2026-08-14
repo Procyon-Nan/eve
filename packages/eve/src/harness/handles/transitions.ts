@@ -8,9 +8,11 @@ import {
   type AgentIdentity,
   type ContinueOperation,
   type StartOperation,
+  type AgentHandleHostRuntime,
 } from "#harness/handles/store.js";
 import type { HarnessSession } from "#harness/types.js";
 import type { AgentTurnOutcome } from "#shared/agent-turn-outcome.js";
+import { enqueueHostRuntimeRelease } from "#harness/host-runtime-releases.js";
 
 /**
  * Records intent to start a fresh child. Must be applied to the step's
@@ -31,6 +33,7 @@ export function prepareAgentStart(
     readonly identity: AgentIdentity;
     readonly operation: StartOperation;
     readonly target: AgentStartTargetInput;
+    readonly hostRuntime?: AgentHandleHostRuntime;
   },
 ): HarnessSession {
   const handles = getAgentHandleStore(session.state)?.handles ?? [];
@@ -39,12 +42,15 @@ export function prepareAgentStart(
   }
   return writeHandles(session, [
     ...handles,
-    {
-      identity: input.identity,
-      operation: input.operation,
-      phase: "starting",
-      target: input.target,
-    },
+    attachAgentHandleHostRuntime(
+      {
+        identity: input.identity,
+        operation: input.operation,
+        phase: "starting",
+        target: input.target,
+      },
+      input.hostRuntime,
+    ),
   ]);
 }
 
@@ -100,12 +106,15 @@ export function prepareAgentContinuation(
     return { kind: "busy" };
   }
 
-  const running: Extract<AgentHandle, { phase: "running" }> = {
-    address: existing.address,
-    identity: existing.identity,
-    operation: { ...input.operation, previousStatus: existing.lastStatus },
-    phase: "running",
-  };
+  const running: Extract<AgentHandle, { phase: "running" }> = attachAgentHandleHostRuntime(
+    {
+      address: existing.address,
+      identity: existing.identity,
+      operation: { ...input.operation, previousStatus: existing.lastStatus },
+      phase: "running",
+    },
+    existing.hostRuntime,
+  );
   return {
     handle: running,
     kind: "ready",
@@ -155,12 +164,15 @@ export function confirmAgentStarted(
     session,
     handles.map((handle) =>
       handle === existing
-        ? {
-            address: input.address,
-            identity: existing.identity,
-            operation: existing.operation,
-            phase: "running",
-          }
+        ? attachAgentHandleHostRuntime(
+            {
+              address: input.address,
+              identity: existing.identity,
+              operation: existing.operation,
+              phase: "running",
+            },
+            existing.hostRuntime,
+          )
         : handle,
     ),
   );
@@ -203,6 +215,9 @@ export function rejectAgentEffect(
                 identity: existing.identity,
                 lastStatus: operation.previousStatus,
                 phase: "parked",
+                ...(existing.hostRuntime === undefined
+                  ? {}
+                  : { hostRuntime: existing.hostRuntime }),
               }
             : handle,
         ),
@@ -235,18 +250,64 @@ export function abandonRunningAgentTurns(session: HarnessSession): HarnessSessio
   if (!handles.some((handle) => handle.phase === "running")) {
     return session;
   }
+  let nextSession = session;
+  for (const handle of handles) {
+    if (handle.phase !== "running" || handle.hostRuntime === undefined) continue;
+    nextSession = enqueueHostRuntimeRelease(nextSession, {
+      outcome: "cancelled",
+      parent: handle.hostRuntime.parent,
+      reference: handle.hostRuntime.reference,
+      sessionId: handle.address.sessionId,
+    });
+  }
   return writeHandles(
-    session,
-    handles.map((handle) =>
-      handle.phase === "running"
-        ? {
-            address: handle.address,
-            identity: handle.identity,
-            lastStatus: "(cancelled)",
-            phase: "parked",
-          }
-        : handle,
+    nextSession,
+    handles.flatMap((handle) =>
+      handle.phase !== "running"
+        ? [handle]
+        : handle.hostRuntime !== undefined
+          ? []
+          : [
+              {
+                address: handle.address,
+                identity: handle.identity,
+                lastStatus: "(cancelled)",
+                phase: "parked" as const,
+              },
+            ],
     ),
+  );
+}
+
+/**
+ * Settles every host-runtime child when its parent session is terminating.
+ * The returned snapshot deletes the authoritative handles and carries durable
+ * release notices for a later workflow step, after this state transition has
+ * committed.
+ */
+export function terminateHostRuntimeAgentHandles<
+  T extends { readonly state?: HarnessSession["state"] },
+>(session: T): T {
+  const handles = getAgentHandleStore(session.state)?.handles ?? [];
+  const owned = handles.filter((handle) => handle.hostRuntime !== undefined);
+  if (owned.length === 0) return session;
+
+  let nextSession = session;
+  for (const handle of owned) {
+    const hostRuntime = handle.hostRuntime;
+    if (hostRuntime === undefined) continue;
+    nextSession = enqueueHostRuntimeRelease(nextSession, {
+      outcome: "cancelled",
+      parent: hostRuntime.parent,
+      reference: hostRuntime.reference,
+      sessionId:
+        handle.phase === "starting" ? hostRuntime.parent.sessionId : handle.address.sessionId,
+    });
+  }
+
+  return writeHandles(
+    nextSession,
+    handles.filter((handle) => handle.hostRuntime === undefined),
   );
 }
 
@@ -301,12 +362,15 @@ export function settleAgentTurn(
       session,
       handles.map((handle) =>
         handle === existing
-          ? {
-              address: existing.address,
-              identity: existing.identity,
-              lastStatus,
-              phase: "parked",
-            }
+          ? attachAgentHandleHostRuntime(
+              {
+                address: existing.address,
+                identity: existing.identity,
+                lastStatus,
+                phase: "parked",
+              },
+              existing.hostRuntime,
+            )
           : handle,
       ),
     ),
@@ -320,12 +384,22 @@ export function settleAgentTurn(
  * transition bug fails loudly here instead of poisoning the session for
  * every later read.
  */
-function writeHandles(session: HarnessSession, handles: readonly AgentHandle[]): HarnessSession {
+function writeHandles<T extends { readonly state?: HarnessSession["state"] }>(
+  session: T,
+  handles: readonly AgentHandle[],
+): T {
   return {
     ...session,
     state: {
       ...session.state,
       [AGENT_HANDLES_STATE_KEY]: assertPersistableAgentHandleStore({ handles }),
     },
-  };
+  } as T;
+}
+
+function attachAgentHandleHostRuntime<T extends AgentHandle>(
+  handle: T,
+  hostRuntime: AgentHandleHostRuntime | undefined,
+): T {
+  return (hostRuntime === undefined ? handle : { ...handle, hostRuntime }) as T;
 }

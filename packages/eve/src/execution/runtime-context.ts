@@ -8,6 +8,7 @@ import {
   ChannelRequestIdKey,
   ContinuationTokenKey,
   DynamicSubagentAgentConfigKey,
+  HostRuntimeContextKey,
   InitiatorAuthKey,
   ModeKey,
   ParentSessionKey,
@@ -47,6 +48,10 @@ export function buildRunContext(input: {
   ctx.set(ModeKey, run.mode);
   ctx.set(AuthKey, auth);
   ctx.set(InitiatorAuthKey, run.initiatorAuth ?? auth);
+
+  if (run.hostRuntime !== undefined) {
+    ctx.set(HostRuntimeContextKey, run.hostRuntime);
+  }
 
   if (input.dynamicSubagentAgentConfig !== undefined) {
     ctx.set(DynamicSubagentAgentConfigKey, input.dynamicSubagentAgentConfig);

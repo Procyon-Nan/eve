@@ -1,12 +1,15 @@
 import { z } from "#compiled/zod/index.js";
 
 import type { SessionStateMap } from "#harness/types.js";
+import type { HostRuntimeParentLineage, HostRuntimeReference } from "#shared/host-runtime.js";
 
 import { AGENT_HANDLES_STATE_KEY } from "./state-key.js";
 
 export { AGENT_HANDLES_STATE_KEY };
 
 const MAX_STATUS_LENGTH = 120;
+const hostRuntimeProviderKindSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,79}$/);
+const hostRuntimeReferenceValueSchema = z.string().min(1).max(512);
 
 /**
  * Stable identity of one delegated child, minted before its start side
@@ -108,19 +111,27 @@ export type AgentHandle =
       readonly identity: AgentIdentity;
       readonly operation: StartOperation;
       readonly target: AgentStartTarget;
+      readonly hostRuntime?: AgentHandleHostRuntime;
     }
   | {
       readonly phase: "running";
       readonly identity: AgentIdentity;
       readonly operation: StartOperation | ContinueOperation;
       readonly address: AgentAddress;
+      readonly hostRuntime?: AgentHandleHostRuntime;
     }
   | {
       readonly phase: "parked";
       readonly identity: AgentIdentity;
       readonly address: AgentAddress;
       readonly lastStatus: string;
+      readonly hostRuntime?: AgentHandleHostRuntime;
     };
+
+export interface AgentHandleHostRuntime {
+  readonly parent: HostRuntimeParentLineage;
+  readonly reference: HostRuntimeReference;
+}
 
 /** Lifecycle phase of a delegated agent handle. */
 export type AgentHandlePhase = AgentHandle["phase"];
@@ -182,24 +193,41 @@ const addressSchema: z.ZodType<AgentAddress> = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const agentHandleHostRuntimeSchema: z.ZodType<AgentHandleHostRuntime> = z.strictObject({
+  parent: z.strictObject({
+    callId: nonEmptyString,
+    rootSessionId: nonEmptyString,
+    sessionId: nonEmptyString,
+    subagentName: nonEmptyString,
+    turnId: nonEmptyString,
+  }),
+  reference: z.strictObject({
+    providerKind: hostRuntimeProviderKindSchema,
+    value: hostRuntimeReferenceValueSchema,
+  }),
+});
+
 const agentHandleSchema: z.ZodType<AgentHandle> = z.discriminatedUnion("phase", [
   z.strictObject({
     identity: identitySchema,
     operation: startOperationSchema,
     phase: z.literal("starting"),
     target: startTargetSchema,
+    hostRuntime: agentHandleHostRuntimeSchema.optional(),
   }),
   z.strictObject({
     address: addressSchema,
     identity: identitySchema,
     operation: z.discriminatedUnion("kind", [startOperationSchema, continueOperationSchema]),
     phase: z.literal("running"),
+    hostRuntime: agentHandleHostRuntimeSchema.optional(),
   }),
   z.strictObject({
     address: addressSchema,
     identity: identitySchema,
     lastStatus: z.string().max(MAX_STATUS_LENGTH),
     phase: z.literal("parked"),
+    hostRuntime: agentHandleHostRuntimeSchema.optional(),
   }),
 ]);
 

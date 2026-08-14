@@ -24,6 +24,7 @@ import type { SandboxAccess } from "#sandbox/state.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { PreparedRuntimeDelegationTool } from "#runtime/sessions/turn.js";
+import type { DurableHostRuntimeContext, ResolvedHostRuntime } from "#shared/host-runtime.js";
 
 // Re-export so consumers don't need a direct channel/ import.
 export type { SessionAuthContext, SessionParent, SessionTurn } from "#channel/types.js";
@@ -75,6 +76,8 @@ export const ParentSessionKey = new ContextKey<SessionParent>("eve.parentSession
 /** Separate from {@link ParentSessionKey} so it stays out of what extensions read. */
 export const ParentTraceContextKey = new ContextKey<SessionTraceContext>("eve.parentTraceContext");
 export const SubagentDepthKey = new ContextKey<number>("eve.subagentDepth");
+/** Opaque host-runtime reference and ownership for the active logical turn. */
+export const HostRuntimeContextKey = new ContextKey<DurableHostRuntimeContext>("eve.hostRuntime");
 
 /**
  * Session-level capability flags (see {@link SessionCapabilities}). Set
@@ -94,6 +97,10 @@ export const SessionCallbackKey = new ContextKey<SessionCallback>("eve.sessionCa
 
 export const SessionKey = new ContextKey<Session>("eve.session");
 export const SandboxKey = new ContextKey<SandboxAccess>("eve.sandbox");
+/** Request-scoped resolved host capabilities; never serialized. */
+export const HostRuntimePreflightKey = new ContextKey<ResolvedHostRuntime>(
+  "eve.hostRuntimePreflight",
+);
 
 // ---------------------------------------------------------------------------
 // Dynamic model keys

@@ -24,19 +24,8 @@ import {
   buildSubagentRootAttributes,
   readParentLineage,
 } from "#execution/eve-workflow-attributes.js";
-import { resolveInstalledPackageInfo } from "#internal/application/package.js";
-import { isEveDevEnvironment } from "#internal/application/dev-environment.js";
 import { createLogger, logError } from "#internal/logging.js";
-import {
-  getHookByToken,
-  getRun,
-  resumeHook,
-  start,
-  type Run,
-  type StartOptionsWithoutDeploymentId,
-  type WorkflowFunction,
-  type WorkflowMetadata,
-} from "#internal/workflow/runtime.js";
+import { getHookByToken, getRun, resumeHook } from "#internal/workflow/runtime.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
@@ -51,65 +40,27 @@ import { walkCauseChain } from "#shared/errors.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
 import { sendCommandToDelivery } from "#execution/session-command-wire.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
+import { startWorkflowPreferLatest } from "#execution/workflow-start.js";
+import { workflowEntryReference } from "#execution/workflow-references.js";
 
-const WORKFLOW_ENTRY_NAME = "workflowEntry";
-const TURN_WORKFLOW_NAME = "turnWorkflow";
-const SESSION_TIMEOUT_WORKFLOW_NAME = "sessionTimeoutWorkflow";
-const EVE_PACKAGE_INFO = resolveInstalledPackageInfo();
+export {
+  LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
+  startWorkflowPreferLatest,
+} from "#execution/workflow-start.js";
+export {
+  hostRuntimeAcceptanceWorkflowReference,
+  sessionTimeoutWorkflowReference,
+  STABLE_WORKFLOW_NAMES,
+  turnWorkflowReference,
+  workflowEntryReference,
+} from "#execution/workflow-references.js";
+
 const COMMAND_HOOK_READY_TIMEOUT_MS = 30_000;
-
-export const LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE =
-  "deploymentId 'latest' requires a World that implements resolveLatestDeploymentId()";
-
-/**
- * Workflow function names whose bundled id is stable across deployments
- * (no `@<pkg.version>` stamp). The bundler reads this set when emitting
- * the workflow id so cross-deployment routing — `start(ref, args, {
- * deploymentId: "latest" })` — finds the same workflow on a newer
- * deployment even when the eve version differs.
- *
- * Both halves of the contract (bundler output and runtime reference
- * template) read this single set so they cannot drift.
- */
-export const STABLE_WORKFLOW_NAMES: ReadonlySet<string> = new Set([
-  WORKFLOW_ENTRY_NAME,
-  TURN_WORKFLOW_NAME,
-  SESSION_TIMEOUT_WORKFLOW_NAME,
-]);
-
-const STABLE_ID_BASE = EVE_PACKAGE_INFO.name;
-
 const log = createLogger("execution.workflow-runtime");
 
 interface WorkflowHookRecord {
   readonly runId: string;
 }
-
-/**
- * Stable workflow reference used by `start()` to locate the workflow
- * entrypoint registered by the Workflow DevKit builder. The id omits
- * the package version stamp so the long-lived driver can rotate across
- * deployments without rewriting the registry key.
- */
-export const workflowEntryReference = {
-  workflowId: `workflow//${STABLE_ID_BASE}//${WORKFLOW_ENTRY_NAME}`,
-};
-
-/**
- * Stable workflow reference used by the driver to dispatch per-turn
- * child workflow runs. The id omits the package version stamp so
- * `start(turnWorkflowReference, args, { deploymentId: "latest" })`
- * routes to the latest deployment's turn workflow even when the eve
- * version differs from the caller's deployment.
- */
-export const turnWorkflowReference = {
-  workflowId: `workflow//${STABLE_ID_BASE}//${TURN_WORKFLOW_NAME}`,
-};
-
-/** Stable workflow reference for session deadline timers. */
-export const sessionTimeoutWorkflowReference = {
-  workflowId: `workflow//${STABLE_ID_BASE}//${SESSION_TIMEOUT_WORKFLOW_NAME}`,
-};
 
 /**
  * Creates a workflow-backed runtime whose long-lived driver owns the
@@ -367,47 +318,6 @@ async function waitForCommandHookRelease(token: string, sessionId: string): Prom
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
-}
-
-/**
- * Starts a workflow on the latest deployment when latest routing applies,
- * while preserving local/dev worlds that do not implement latest routing.
- */
-export async function startWorkflowPreferLatest<TArgs extends unknown[], TResult>(
-  workflow: WorkflowFunction<TArgs, TResult> | WorkflowMetadata,
-  args: TArgs,
-  options?: StartOptionsWithoutDeploymentId,
-): Promise<Run<unknown> | Run<TResult>> {
-  if (!shouldRouteToLatestDeployment()) {
-    return options === undefined
-      ? await start(workflow, args)
-      : await start(workflow, args, options);
-  }
-
-  try {
-    return await start(workflow, args, { ...options, deploymentId: "latest" });
-  } catch (error) {
-    if (!isLatestDeploymentUnsupportedError(error)) {
-      throw error;
-    }
-
-    return options === undefined
-      ? await start(workflow, args)
-      : await start(workflow, args, options);
-  }
-}
-
-/**
- * Local development resolves "latest" to the active promoted generation.
- * Vercel resolves it only for production deployments; previews and CLI
- * deployments have no branch reference and remain pinned to themselves.
- */
-function shouldRouteToLatestDeployment(): boolean {
-  return process.env.VERCEL_ENV === "production" || isEveDevEnvironment();
-}
-
-function isLatestDeploymentUnsupportedError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes(LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE);
 }
 
 function normalizeWorkflowHook(value: unknown): WorkflowHookRecord {

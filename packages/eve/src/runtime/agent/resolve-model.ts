@@ -2,10 +2,14 @@ import type { LanguageModel } from "ai";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
 import { normalizeAgentDefinition } from "#internal/authored-definition/core.js";
 import { formatLanguageModelGatewayId } from "#internal/runtime-model.js";
-import type {
-  RuntimeDynamicModelReference,
-  RuntimeModelReference,
+import {
+  isHostRuntimeModelReference,
+  type RuntimeDynamicModelReference,
+  type RuntimeModelReference,
 } from "#runtime/agent/bootstrap.js";
+import { loadContext } from "#context/container.js";
+import { HostRuntimePreflightKey } from "#context/keys.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 import { resolveBootstrapRuntimeModel } from "#runtime/agent/bootstrap-model.js";
 import {
   resolveMockAuthoredRuntimeModel,
@@ -43,6 +47,14 @@ export async function resolveRuntimeModelReference(
   reference: RuntimeModelReference,
   scope?: RuntimeModelResolutionScope,
 ): Promise<LanguageModel> {
+  if (isHostRuntimeModelReference(reference)) {
+    const resolved = loadContext().get(HostRuntimePreflightKey);
+    if (resolved === undefined) {
+      throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+    }
+    return resolved.model;
+  }
+
   const bootstrapModel = resolveBootstrapRuntimeModel(reference);
 
   if (bootstrapModel !== null) {
@@ -63,8 +75,10 @@ export async function resolveRuntimeModelReference(
 }
 
 async function loadSourceBackedRuntimeModelReference(
-  reference: RuntimeModelReference & {
-    readonly source: NonNullable<RuntimeModelReference["source"]>;
+  reference: Exclude<RuntimeModelReference, { readonly type: "host-runtime" }> & {
+    readonly source: NonNullable<
+      Exclude<RuntimeModelReference, { readonly type: "host-runtime" }>["source"]
+    >;
   },
   scope: RuntimeModelResolutionScope | undefined,
 ): Promise<LanguageModel> {
@@ -101,10 +115,12 @@ async function loadSourceBackedRuntimeModelReference(
 
 function isSourceBackedRuntimeModelReference(
   reference: RuntimeModelReference,
-): reference is RuntimeModelReference & {
-  readonly source: NonNullable<RuntimeModelReference["source"]>;
+): reference is Exclude<RuntimeModelReference, { readonly type: "host-runtime" }> & {
+  readonly source: NonNullable<
+    Exclude<RuntimeModelReference, { readonly type: "host-runtime" }>["source"]
+  >;
 } {
-  return reference.source !== undefined;
+  return !isHostRuntimeModelReference(reference) && reference.source !== undefined;
 }
 
 export async function loadDynamicRuntimeModelDefinition(input: {

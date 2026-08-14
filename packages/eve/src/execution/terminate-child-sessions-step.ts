@@ -1,5 +1,6 @@
 import { readDurableSession, type DurableSessionState } from "#execution/durable-session-store.js";
 import { getAgentHandleStore, type AgentHandle } from "#harness/handles/store.js";
+import { terminateHostRuntimeAgentHandles } from "#harness/handles/transitions.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { cancelRun, getWorld } from "#internal/workflow/runtime.js";
 
@@ -18,7 +19,7 @@ const log = createLogger("execution.terminate-child-sessions");
  */
 export async function terminateChildSessionsStep(input: {
   readonly sessionState: DurableSessionState;
-}): Promise<void> {
+}): Promise<DurableSessionState> {
   "use step";
 
   let session;
@@ -28,12 +29,12 @@ export async function terminateChildSessionsStep(input: {
     logError(log, "failed to read child sessions for termination", error, {
       parentSessionId: input.sessionState.sessionId,
     });
-    return;
+    return input.sessionState;
   }
 
   const handles = (getAgentHandleStore(session.state)?.handles ?? []).filter(isLocalChildHandle);
   if (handles.length === 0) {
-    return;
+    return input.sessionState;
   }
 
   for (const handle of handles) {
@@ -58,6 +59,17 @@ export async function terminateChildSessionsStep(input: {
       });
     }
   }
+
+  const settledSession = terminateHostRuntimeAgentHandles(session);
+  return settledSession === session
+    ? input.sessionState
+    : {
+        ...input.sessionState,
+        snapshot: {
+          session: settledSession,
+          version: input.sessionState.version,
+        },
+      };
 }
 
 function isLocalChildHandle(handle: AgentHandle): boolean {

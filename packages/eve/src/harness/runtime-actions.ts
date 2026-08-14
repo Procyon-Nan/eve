@@ -21,6 +21,7 @@ import type {
   SessionStateMap,
   StepInput,
 } from "#harness/types.js";
+import { enqueueHostRuntimeRelease } from "#harness/host-runtime-releases.js";
 
 const PENDING_RUNTIME_ACTION_BATCH_KEY = "eve.runtime.pendingActionBatch";
 type ToolResponsePart = Extract<ModelMessage, { role: "tool" }>["content"][number];
@@ -247,6 +248,20 @@ export async function resolvePendingRuntimeActions(input: {
     }
     if (outcome.kind === "terminal" && "continuationToken" in handle.address) {
       nextSession = clearProxyInputRequestsForChild(nextSession, handle.address.continuationToken);
+    }
+    if (outcome.kind === "terminal" && handle.hostRuntime !== undefined) {
+      const result = outcome.result;
+      nextSession = enqueueHostRuntimeRelease(nextSession, {
+        outcome:
+          result.kind === "succeeded"
+            ? "completed"
+            : result.kind === "cancelled"
+              ? "cancelled"
+              : "failed",
+        parent: handle.hostRuntime.parent,
+        reference: handle.hostRuntime.reference,
+        sessionId: handle.address.sessionId,
+      });
     }
     const settled = settleAgentTurn(nextSession, {
       operationId: handle.operation.id,

@@ -8,18 +8,37 @@ import {
 } from "#shared/agent-definition.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 import { serializeOutputSchema } from "#shared/tool-schema.js";
+import type {
+  HostRuntimeDefinition,
+  HostRuntimeParentLineage,
+  HostRuntimeReference,
+} from "#shared/host-runtime.js";
 
-export interface DynamicSubagentAgentConfig {
+interface DynamicSubagentAgentConfigBase {
   readonly compaction?: {
     readonly model?: DynamicSubagentModelReference;
     readonly thresholdPercent?: number;
   };
   readonly description: string;
   readonly limits?: AgentLimitsDefinition;
-  readonly model: DynamicSubagentModelReference;
   readonly outputSchema?: JsonObject;
   readonly reasoning?: AgentReasoningDefinition;
 }
+
+export type DynamicSubagentAgentConfig = DynamicSubagentAgentConfigBase &
+  (
+    | {
+        readonly model: DynamicSubagentModelReference;
+        readonly runtime?: never;
+      }
+    | {
+        readonly model?: never;
+        readonly runtime: HostRuntimeDefinition & {
+          readonly reference?: HostRuntimeReference;
+          readonly parent?: HostRuntimeParentLineage;
+        };
+      }
+  );
 
 export interface DynamicSubagentModelReference {
   readonly contextWindowTokens?: number;
@@ -32,7 +51,7 @@ export function normalizeDynamicSubagentAgentConfig(input: {
   readonly value: unknown;
 }): DynamicSubagentAgentConfig {
   const message = `Dynamic subagent "${input.name}" must return defineAgent(...), defineRemoteAgent(...), or null.`;
-  const definition = normalizeAgentDefinition(input.value, message);
+  const definition = normalizeAgentDefinition(input.value, message, { allowHostRuntime: true });
 
   if (!definition.description) {
     throw new Error(`${message} The "description" field is required.`);
@@ -43,7 +62,7 @@ export function normalizeDynamicSubagentAgentConfig(input: {
   if (definition.experimental !== undefined) {
     throw new Error(`${message} The "experimental" field cannot be selected at runtime.`);
   }
-  if (isDynamicModelDefinition(definition.model)) {
+  if (definition.model !== undefined && isDynamicModelDefinition(definition.model)) {
     throw new Error(`${message} The returned "model" must be static.`);
   }
 
@@ -51,18 +70,26 @@ export function normalizeDynamicSubagentAgentConfig(input: {
     compaction?: DynamicSubagentAgentConfig["compaction"];
     description: string;
     limits?: AgentLimitsDefinition;
-    model: DynamicSubagentModelReference;
+    model?: DynamicSubagentModelReference;
+    runtime?: DynamicSubagentAgentConfig["runtime"];
     outputSchema?: JsonObject;
     reasoning?: AgentReasoningDefinition;
   } = {
     description: definition.description,
-    model: normalizeModelReference({
+  };
+
+  if (definition.runtime !== undefined) {
+    config.runtime = definition.runtime;
+  } else if (definition.model !== undefined) {
+    config.model = normalizeModelReference({
       contextWindowTokens: definition.modelContextWindowTokens,
       model: definition.model,
       name: input.name,
       providerOptions: definition.modelOptions?.providerOptions,
-    }),
-  };
+    });
+  } else {
+    throw new Error(`${message} The returned agent must declare either "model" or "runtime".`);
+  }
 
   if (definition.compaction !== undefined) {
     const compaction: {
@@ -92,7 +119,7 @@ export function normalizeDynamicSubagentAgentConfig(input: {
     config.reasoning = definition.reasoning;
   }
 
-  return config;
+  return config as DynamicSubagentAgentConfig;
 }
 
 function normalizeModelReference(input: {

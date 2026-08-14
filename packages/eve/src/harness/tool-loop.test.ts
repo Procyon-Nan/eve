@@ -3531,6 +3531,45 @@ describe("createToolLoopHarness", () => {
     expect(eventTypes).not.toContain("session.failed");
   });
 
+  it("combines the caller cancellation signal with the host model deadline", async () => {
+    const caller = new AbortController();
+    const timeoutSignal = new AbortController().signal;
+    const combinedSignal = new AbortController().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+    const anySpy = vi.spyOn(AbortSignal, "any").mockReturnValue(combinedSignal);
+
+    try {
+      setupMockAgent({
+        finishReason: "stop",
+        response: { messages: [{ content: "done", role: "assistant" }] },
+        text: "done",
+        toolCalls: [],
+        toolResults: [],
+      });
+      const { emit } = createEventCollector();
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", emit, {
+          abortSignal: caller.signal,
+          modelCallTimeoutMs: 5_000,
+        }),
+      );
+
+      await runStep(createTestSession(), { message: "Hi" });
+
+      expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+      expect(anySpy).toHaveBeenCalledWith([caller.signal, timeoutSignal]);
+      const instance = vi.mocked(ToolLoopAgent).mock.results[0]?.value as
+        | { stream: ReturnType<typeof vi.fn> }
+        | undefined;
+      expect(instance?.stream).toHaveBeenCalledWith(
+        expect.objectContaining({ abortSignal: combinedSignal }),
+      );
+    } finally {
+      timeoutSpy.mockRestore();
+      anySpy.mockRestore();
+    }
+  });
+
   it("does not retry or recover a model call once the turn signal has aborted", async () => {
     const abortController = new AbortController();
     const cancellation = new TurnCancelledError();

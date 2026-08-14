@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AGENT_HANDLES_STATE_KEY, type AgentHandle } from "#harness/handles/store.js";
+import { PENDING_HOST_RUNTIME_RELEASES_STATE_KEY } from "#harness/host-runtime-releases.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { terminateChildSessionsStep } from "#execution/terminate-child-sessions-step.js";
 
@@ -74,14 +75,11 @@ describe("terminateChildSessionsStep", () => {
       .mockResolvedValueOnce(undefined);
 
     try {
-      await expect(
-        terminateChildSessionsStep({
-          sessionState: makeSessionState([
-            runningHandle({ id: "ag_child:1", kind: "agent/local", sessionId: "session-1" }),
-            parkedHandle({ id: "ag_child:2", kind: "agent/self", sessionId: "session-2" }),
-          ]),
-        }),
-      ).resolves.toBeUndefined();
+      const sessionState = makeSessionState([
+        runningHandle({ id: "ag_child:1", kind: "agent/local", sessionId: "session-1" }),
+        parkedHandle({ id: "ag_child:2", kind: "agent/self", sessionId: "session-2" }),
+      ]);
+      await expect(terminateChildSessionsStep({ sessionState })).resolves.toBe(sessionState);
 
       expect(cancelRunMock).toHaveBeenCalledTimes(2);
       expect(errorSpy).toHaveBeenCalledWith(
@@ -94,6 +92,35 @@ describe("terminateChildSessionsStep", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it("settles host-runtime handles before their release callback step", async () => {
+    const settled = await terminateChildSessionsStep({
+      sessionState: makeSessionState([
+        runningHandle({
+          hostRuntime: true,
+          id: "ag_specialist:1",
+          kind: "agent/local",
+          sessionId: "specialist-session",
+        }),
+      ]),
+    });
+
+    expect(settled.snapshot?.session.state?.[AGENT_HANDLES_STATE_KEY]).toEqual({ handles: [] });
+    expect(settled.snapshot?.session.state?.[PENDING_HOST_RUNTIME_RELEASES_STATE_KEY]).toEqual([
+      {
+        outcome: "cancelled",
+        parent: {
+          callId: "call-1",
+          rootSessionId: "parent-session",
+          sessionId: "parent-session",
+          subagentName: "research",
+          turnId: "turn-1",
+        },
+        reference: { providerKind: "baigong-agent", value: "specialist-reference" },
+        sessionId: "specialist-session",
+      },
+    ]);
   });
 });
 
@@ -116,6 +143,7 @@ function makeAddress(kind: AddressKind, sessionId: string) {
 }
 
 function runningHandle(input: {
+  readonly hostRuntime?: boolean;
   readonly id: string;
   readonly kind: AddressKind;
   readonly sessionId: string;
@@ -130,6 +158,20 @@ function runningHandle(input: {
       parentTurnId: "turn-1",
     },
     phase: "running",
+    ...(input.hostRuntime === true
+      ? {
+          hostRuntime: {
+            parent: {
+              callId: "call-1",
+              rootSessionId: "parent-session",
+              sessionId: "parent-session",
+              subagentName: "research",
+              turnId: "turn-1",
+            },
+            reference: { providerKind: "baigong-agent", value: "specialist-reference" },
+          },
+        }
+      : {}),
   };
 }
 

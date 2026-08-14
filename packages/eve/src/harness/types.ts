@@ -283,6 +283,8 @@ export interface ToolLoopHarnessConfig {
    * for terminal assistant text inside the current invocation.
    */
   readonly mode: RunMode;
+  /** Host-supplied deadline applied to each individual model request only. */
+  readonly modelCallTimeoutMs?: number;
   /**
    * Called after compaction to let the execution layer re-apply
    * framework-owned state preservation (read-before-write reset, todo

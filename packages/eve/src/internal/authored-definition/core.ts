@@ -16,6 +16,8 @@ import {
   getOptionalStringRecordProperty,
 } from "#internal/authored-module.js";
 import type { PublicAgentStaticModelDefinition } from "#shared/agent-definition.js";
+import type { HostRuntimeDefinition } from "#shared/host-runtime.js";
+import { validateHostRuntimeDefinition } from "#runtime/host-runtime/validation.js";
 import {
   isDynamicSentinel,
   type DynamicEvents,
@@ -33,6 +35,10 @@ type NormalizedAgentDefinition = Omit<AgentDefinition, "build"> & {
   };
 };
 
+type NormalizeAgentDefinitionOptions = {
+  readonly allowHostRuntime?: boolean;
+};
+
 /**
  * Normalizes one authored agent definition into the canonical internal shape.
  *
@@ -42,7 +48,8 @@ type NormalizedAgentDefinition = Omit<AgentDefinition, "build"> & {
 export function normalizeAgentDefinition(
   value: unknown,
   message: string,
-): Readonly<NormalizedAgentDefinition> {
+  options: NormalizeAgentDefinitionOptions = {},
+): Readonly<NormalizedAgentDefinition & { runtime?: HostRuntimeDefinition }> {
   const record = expectObjectRecord(value, message);
   expectOnlyKnownKeys(
     record,
@@ -57,16 +64,25 @@ export function normalizeAgentDefinition(
       "modelOptions",
       "outputSchema",
       "reasoning",
+      ...(options.allowHostRuntime === true ? ["runtime"] : []),
     ],
     message,
   );
-  if (record.model === undefined) {
+  if (record.model === undefined && record.runtime === undefined) {
     throw new Error(`${message} The "model" field is required.`);
   }
+  if (record.model !== undefined && record.runtime !== undefined) {
+    throw new Error(`${message} The "model" and "runtime" fields cannot be combined.`);
+  }
 
-  const definition: Mutable<NormalizedAgentDefinition> = {
-    model: normalizeAgentModelDefinition(record.model, message),
+  const definition = {} as Mutable<NormalizedAgentDefinition> & {
+    runtime?: HostRuntimeDefinition;
   };
+  if (record.runtime === undefined) {
+    definition.model = normalizeAgentModelDefinition(record.model, message);
+  } else {
+    definition.runtime = validateHostRuntimeDefinition(record.runtime);
+  }
 
   if (record.description !== undefined) {
     definition.description = expectString(record.description, message);
@@ -74,6 +90,9 @@ export function normalizeAgentDefinition(
 
   if (record.compaction !== undefined) {
     definition.compaction = normalizeAgentCompactionDefinition(record.compaction, message);
+    if (record.runtime !== undefined && definition.compaction.model !== undefined) {
+      throw new Error(`${message} Host runtime agents cannot declare a compaction model.`);
+    }
   }
 
   if (record.build !== undefined) {
@@ -85,10 +104,16 @@ export function normalizeAgentDefinition(
   }
 
   if (record.modelOptions !== undefined) {
+    if (record.runtime !== undefined) {
+      throw new Error(`${message} Host runtime agents cannot declare model options.`);
+    }
     definition.modelOptions = normalizeAgentModelOptions(record.modelOptions, message);
   }
 
   if (record.modelContextWindowTokens !== undefined) {
+    if (record.runtime !== undefined) {
+      throw new Error(`${message} Host runtime agents cannot declare a model context window.`);
+    }
     definition.modelContextWindowTokens = expectPositiveInteger(
       record.modelContextWindowTokens,
       message,

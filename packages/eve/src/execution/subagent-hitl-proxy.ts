@@ -13,6 +13,7 @@ import type { HarnessEmitFn, HarnessSession, SessionStateMap } from "#harness/ty
 import { createInputRequestedEvent } from "#protocol/message.js";
 import type { RunMode } from "#shared/run-mode.js";
 import type { InputResponse } from "#runtime/input/types.js";
+import type { HostRuntimeParentLineage } from "#shared/host-runtime.js";
 import { SESSION_LIMIT_STOP_OPTION_ID } from "#harness/session-limit-continuation.js";
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ export async function emitProxiedInputRequest(input: {
 export interface RoutedDeliverPayload {
   readonly forChildren: readonly {
     readonly childContinuationToken: string;
+    readonly inheritedHostRuntimeParent?: HostRuntimeParentLineage;
     readonly payload: { readonly inputResponses: readonly InputResponse[] };
   }[];
   readonly forSelf: DeliverPayload | undefined;
@@ -82,7 +84,13 @@ export function routeDeliverPayload(input: {
   const entries = getProxyInputRequests(input.state);
   const inputResponses = input.payload.inputResponses ?? [];
 
-  const responsesByChild = new Map<string, InputResponse[]>();
+  const responsesByChild = new Map<
+    string,
+    {
+      readonly inheritedHostRuntimeParent?: HostRuntimeParentLineage;
+      readonly responses: InputResponse[];
+    }
+  >();
   const unroutedResponses: InputResponse[] = [];
   let parentAction: RoutedDeliverPayload["parentAction"];
 
@@ -101,16 +109,24 @@ export function routeDeliverPayload(input: {
     const existing = responsesByChild.get(route.childContinuationToken);
 
     if (existing === undefined) {
-      responsesByChild.set(route.childContinuationToken, [response]);
+      responsesByChild.set(route.childContinuationToken, {
+        ...(route.inheritedHostRuntimeParent === undefined
+          ? {}
+          : { inheritedHostRuntimeParent: route.inheritedHostRuntimeParent }),
+        responses: [response],
+      });
     } else {
-      existing.push(response);
+      existing.responses.push(response);
     }
   }
 
   const forChildren: RoutedDeliverPayload["forChildren"] = [...responsesByChild.entries()].map(
-    ([childContinuationToken, responses]) => ({
+    ([childContinuationToken, routed]) => ({
       childContinuationToken,
-      payload: { inputResponses: responses },
+      ...(routed.inheritedHostRuntimeParent === undefined
+        ? {}
+        : { inheritedHostRuntimeParent: routed.inheritedHostRuntimeParent }),
+      payload: { inputResponses: routed.responses },
     }),
   );
 

@@ -250,6 +250,58 @@ describe("routeProxiedDeliverStep", () => {
       requestId: undefined,
     });
   });
+
+  it("rolls the active root runtime into an inherited child HITL delivery", async () => {
+    const parent = {
+      callId: "call-agent",
+      rootSessionId: "parent-session",
+      sessionId: "parent-session",
+      subagentName: "agent",
+      turnId: "turn-1",
+    } as const;
+    const session = upsertProxyInputRequests({
+      entries: [
+        [
+          "request-1",
+          {
+            childContinuationToken: "child-token",
+            inheritedHostRuntimeParent: parent,
+            kind: "tool-approval",
+          },
+        ],
+      ],
+      forChildContinuationToken: "child-token",
+      session: createStubSession({
+        continuationToken: "parent-token",
+        sessionId: "parent-session",
+      }),
+    });
+    installSessionStoreMocks([session]);
+
+    await routeProxiedDeliverStep({
+      hostRuntime: {
+        acceptanceKey: "accept-2",
+        ownership: "root",
+        reference: { providerKind: "baigong-agent", value: "root-reference-2" },
+      },
+      parentWritable: createTestWritable(),
+      payload: { inputResponses: [{ optionId: "approve", requestId: "request-1" }] },
+      sessionState: createStubSessionState({
+        continuationToken: "parent-token",
+        hasProxyInputRequests: true,
+        sessionId: "parent-session",
+      }),
+    });
+
+    expect(resumeHookMock.mock.calls[0]?.[1]).toMatchObject({
+      hostRuntime: {
+        ownership: "inherited",
+        parent,
+        reference: { providerKind: "baigong-agent", value: "root-reference-2" },
+      },
+      kind: "deliver",
+    });
+  });
 });
 
 describe("dispatchTurnStep", () => {

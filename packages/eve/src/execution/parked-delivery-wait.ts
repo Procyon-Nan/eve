@@ -4,6 +4,8 @@ import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import type { SessionCommandInbox } from "#execution/session-command-inbox.js";
 import { sendCommandToDelivery } from "#execution/session-command-wire.js";
 import { coalesceDeliveries } from "#harness/messages.js";
+import { readActiveRootHostRuntime } from "#execution/host-runtime-context.js";
+import { installTurnHostRuntimeStep } from "#execution/host-runtime-context-step.js";
 
 type NextSessionAction =
   | { readonly kind: "clear" }
@@ -17,16 +19,17 @@ type NextSessionAction =
 
 /** What the parked driver should do with the next session activity. */
 export type NextTurnInstruction =
-  | { readonly kind: "clear" }
-  | { readonly kind: "compact" }
-  | { readonly kind: "expired" }
-  | { readonly kind: "reset" }
-  | { readonly kind: "closed" }
-  | { readonly kind: "cancel-turn" }
+  | { readonly kind: "clear"; readonly serializedContext: Record<string, unknown> }
+  | { readonly kind: "compact"; readonly serializedContext: Record<string, unknown> }
+  | { readonly kind: "expired"; readonly serializedContext: Record<string, unknown> }
+  | { readonly kind: "reset"; readonly serializedContext: Record<string, unknown> }
+  | { readonly kind: "closed"; readonly serializedContext: Record<string, unknown> }
+  | { readonly kind: "cancel-turn"; readonly serializedContext: Record<string, unknown> }
   | {
       readonly kind: "turn";
       readonly deliver: DeliverHookPayload;
       readonly remainder: DeliverPayload;
+      readonly serializedContext: Record<string, unknown>;
     };
 
 /**
@@ -41,8 +44,11 @@ export async function nextTurnDelivery(input: {
   readonly bufferedSessionControls: Array<"clear" | "compact" | "expired" | "reset">;
   readonly commandInbox: SessionCommandInbox;
   readonly driverWritable: WritableStream<Uint8Array>;
+  readonly onSerializedContextChange: (serializedContext: Record<string, unknown>) => void;
+  readonly serializedContext: Record<string, unknown>;
   readonly sessionState: DurableSessionState;
 }): Promise<NextTurnInstruction> {
+  let serializedContext = input.serializedContext;
   while (true) {
     const nextAction = await waitForNextSessionAction({
       bufferedDeliveries: input.bufferedDeliveries,
@@ -51,23 +57,32 @@ export async function nextTurnDelivery(input: {
     });
 
     if (nextAction.kind !== "delivery") {
-      return { kind: nextAction.kind };
+      return { kind: nextAction.kind, serializedContext };
     }
 
     const deliver = nextAction.delivery;
     if (deliver === null) {
-      return { kind: "closed" };
+      return { kind: "closed", serializedContext };
+    }
+
+    if (deliver.hostRuntime !== undefined || ownsTurnHostRuntime(serializedContext)) {
+      serializedContext = await installTurnHostRuntimeStep({
+        hostRuntime: deliver.hostRuntime,
+        serializedContext,
+      });
+      input.onSerializedContextChange(serializedContext);
     }
 
     const routed = await routeDeliverToChildren({
       auth: deliver.auth,
+      hostRuntime: readActiveRootHostRuntime(serializedContext),
       parentWritable: input.driverWritable,
       payloads: deliver.payloads,
       sessionState: input.sessionState,
     });
 
     if (routed.kind === "cancel-turn") {
-      return { kind: "cancel-turn" };
+      return { kind: "cancel-turn", serializedContext };
     }
 
     if (routed.remainder === undefined) {
@@ -75,8 +90,15 @@ export async function nextTurnDelivery(input: {
       continue;
     }
 
-    return { deliver, kind: "turn", remainder: routed.remainder };
+    return { deliver, kind: "turn", remainder: routed.remainder, serializedContext };
   }
+}
+
+function ownsTurnHostRuntime(serializedContext: Record<string, unknown>): boolean {
+  const hostRuntime = serializedContext["eve.hostRuntime"] as
+    | { readonly ownership?: unknown }
+    | undefined;
+  return hostRuntime?.ownership === "root" || hostRuntime?.ownership === "inherited";
 }
 
 async function waitForNextSessionAction(input: {
@@ -138,7 +160,12 @@ function takeBufferedTurnDelivery(bufferedDeliveries: DeliverHookPayload[]): Del
   let caller = first.caller;
   while (bufferedDeliveries.length > 0) {
     const next = bufferedDeliveries[0];
-    if (next === undefined || (caller !== undefined && next.caller !== undefined)) {
+    if (
+      next === undefined ||
+      (caller !== undefined && next.caller !== undefined) ||
+      first.hostRuntime !== undefined ||
+      next.hostRuntime !== undefined
+    ) {
       break;
     }
 

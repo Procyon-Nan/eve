@@ -87,6 +87,23 @@ describe("getAgentHandleStore", () => {
           },
         ],
       },
+      {
+        handles: [
+          {
+            ...parkedHandle,
+            hostRuntime: {
+              parent: {
+                callId: "call_1",
+                rootSessionId: "session_parent",
+                sessionId: "session_parent",
+                subagentName: "research",
+                turnId: "turn_1",
+              },
+              reference: { providerKind: "Invalid Provider", value: "opaque" },
+            },
+          },
+        ],
+      },
     ]) {
       expect(() => getAgentHandleStore({ [AGENT_HANDLES_STATE_KEY]: malformed })).toThrow(
         AGENT_HANDLES_STATE_KEY,

@@ -3,6 +3,7 @@
  * harness code can identify a delegated child run without reaching the
  * adapter's workflow-coupled behavior (`runtime-boundary.test.ts`).
  */
+import type { HostRuntimeParentLineage, HostRuntimeReference } from "#shared/host-runtime.js";
 
 /**
  * Durable adapter kind used for delegated subagent child runs.
@@ -30,6 +31,10 @@ export interface SubagentAdapterState extends Record<string, unknown> {
   readonly parentContinuationToken: string;
   readonly parentSessionId: string;
   readonly subagentName: string;
+  readonly hostRuntime?: {
+    readonly parent: HostRuntimeParentLineage;
+    readonly reference: HostRuntimeReference;
+  };
 }
 
 /**
@@ -47,13 +52,34 @@ export function isSubagentAdapterState(value: unknown): value is SubagentAdapter
   const state = value as Partial<SubagentAdapterState>;
 
   return (
-    typeof state.callId === "string" &&
-    state.callId.length > 0 &&
-    typeof state.parentContinuationToken === "string" &&
-    state.parentContinuationToken.length > 0 &&
-    typeof state.parentSessionId === "string" &&
-    state.parentSessionId.length > 0 &&
-    typeof state.subagentName === "string" &&
-    state.subagentName.length > 0
+    isNonEmptyString(state.callId) &&
+    isNonEmptyString(state.parentContinuationToken) &&
+    isNonEmptyString(state.parentSessionId) &&
+    isNonEmptyString(state.subagentName) &&
+    isHostRuntimeState(state.hostRuntime)
   );
+}
+
+function isHostRuntimeState(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (value === null || typeof value !== "object") return false;
+  const state = value as {
+    readonly parent?: Partial<HostRuntimeParentLineage>;
+    readonly reference?: Partial<HostRuntimeReference>;
+  };
+  return (
+    typeof state.reference?.providerKind === "string" &&
+    /^[a-z][a-z0-9_-]{0,79}$/.test(state.reference.providerKind) &&
+    isNonEmptyString(state.reference.value) &&
+    state.reference.value.length <= 512 &&
+    isNonEmptyString(state.parent?.rootSessionId) &&
+    isNonEmptyString(state.parent.sessionId) &&
+    isNonEmptyString(state.parent.turnId) &&
+    isNonEmptyString(state.parent.callId) &&
+    isNonEmptyString(state.parent.subagentName)
+  );
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
 }

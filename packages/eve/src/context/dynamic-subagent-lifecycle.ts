@@ -8,6 +8,7 @@ import {
   SessionDynamicSubagentSelectionsKey,
   TurnDynamicSubagentSelectionsKey,
   type DurableDynamicSubagentSelection,
+  HostRuntimeContextKey,
 } from "#context/keys.js";
 import { createHarnessDelegationToolDefinition } from "#execution/delegation-tool.js";
 import type { HarnessToolDefinition } from "#harness/execute-tool.js";
@@ -21,6 +22,10 @@ import {
 import { normalizeDynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import { normalizeDynamicRemoteAgentConfig } from "#runtime/subagents/dynamic-remote-agent-config.js";
 import { toErrorMessage } from "#shared/errors.js";
+import {
+  getEffectiveDelegatedSubagentNames,
+  isTopLevelHostRuntimeSession,
+} from "#runtime/host-runtime/preflight.js";
 
 const log = createLogger("dynamic-subagents");
 const ALLOWED_DYNAMIC_SUBAGENT_EVENTS = new Set(["session.started", "turn.started"]);
@@ -35,8 +40,22 @@ async function resolveSelections(input: {
   readonly resolvers: readonly ResolvedDynamicSubagentResolver[];
 }): Promise<DynamicSubagentSelections> {
   const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions);
+  const hostRuntime = input.ctx.get(HostRuntimeContextKey);
+  const topLevelHostRuntime = hostRuntime !== undefined && isTopLevelHostRuntimeSession(input.ctx);
+  const authorizedNames = getEffectiveDelegatedSubagentNames(input.ctx);
   const outcomes = await Promise.allSettled(
     input.resolvers.map(async (resolver) => {
+      if (resolver.runtime !== undefined) {
+        if (
+          input.event.type !== "turn.started" ||
+          hostRuntime === undefined ||
+          !topLevelHostRuntime ||
+          !authorizedNames.has(resolver.name) ||
+          resolver.runtime.providerKind !== hostRuntime.reference.providerKind
+        ) {
+          return [resolver.nodeId, null] as const;
+        }
+      }
       const handler = resolver.events[input.event.type];
       if (handler === undefined) {
         return [resolver.nodeId, null] as const;
@@ -74,6 +93,29 @@ async function resolveSelections(input: {
         name: resolver.name,
         value: result,
       });
+      if (agentConfig.runtime !== undefined) {
+        if (
+          resolver.runtime === undefined ||
+          resolver.runtime.providerKind !== agentConfig.runtime.providerKind
+        ) {
+          throw new Error(
+            `Host-runtime subagent "${resolver.name}" must declare the same runtime on defineDynamic(...).`,
+          );
+        }
+        if (input.event.type !== "turn.started") {
+          throw new Error(
+            `Host-runtime subagent "${resolver.name}" may only be selected from turn.started.`,
+          );
+        }
+        if (
+          hostRuntime === undefined ||
+          !topLevelHostRuntime ||
+          !authorizedNames.has(resolver.name) ||
+          agentConfig.runtime.providerKind !== hostRuntime.reference.providerKind
+        ) {
+          throw new Error(`Host-runtime subagent "${resolver.name}" is not authorized.`);
+        }
+      }
       const prepared = createPreparedRuntimeSubagentTool(
         {
           description: agentConfig.description,

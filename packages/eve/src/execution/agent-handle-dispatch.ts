@@ -32,6 +32,7 @@ import { createWorkflowCallbackUrl } from "#execution/workflow-callback-url.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { createEveCallbackRoutePath } from "#protocol/routes.js";
 import { err, ok, type Result } from "#shared/result.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 const log = createLogger("execution.agent-handle-dispatch");
 
@@ -96,6 +97,7 @@ export async function dispatchToAgentHandle(input: {
   readonly delegationMessage: string;
   readonly parentToken: string;
   readonly parentTurnId: string;
+  readonly parentHostRuntime?: DurableHostRuntimeContext;
 }): Promise<DispatchOutcome> {
   const { action, agentId, bundle } = input;
   const invokedName =
@@ -172,6 +174,22 @@ export async function dispatchToAgentHandle(input: {
     bundle,
     delegationMessage: input.delegationMessage,
     handle,
+    hostRuntime:
+      handle.address.kind === "agent/self" &&
+      input.parentHostRuntime?.ownership === "root" &&
+      input.parentHostRuntime.releasedOutcome === undefined
+        ? {
+            ownership: "inherited" as const,
+            parent: {
+              callId: action.callId,
+              rootSessionId: input.currentSession.rootSessionId ?? input.currentSession.sessionId,
+              sessionId: input.currentSession.sessionId,
+              subagentName: handle.identity.name,
+              turnId: input.parentTurnId,
+            },
+            reference: input.parentHostRuntime.reference,
+          }
+        : undefined,
     parentToken: input.parentToken,
   });
   if (!delivery.ok) {
@@ -228,6 +246,7 @@ async function deliverToAgentHandle(input: {
   readonly bundle: CompiledBundle;
   readonly delegationMessage: string;
   readonly handle: Extract<AgentHandle, { phase: "running" }>;
+  readonly hostRuntime?: DurableHostRuntimeContext;
   readonly parentToken: string;
 }): Promise<Result<void, { readonly cause: unknown; readonly permanent: boolean }>> {
   const { action, bundle, delegationMessage, handle } = input;
@@ -283,6 +302,7 @@ async function deliverToAgentHandle(input: {
           replyTo: { kind: "hook", token: input.parentToken },
           subagentName: identity.name,
         },
+        hostRuntime: input.hostRuntime,
         kind: "send",
         payload: {
           message: delegationMessage,

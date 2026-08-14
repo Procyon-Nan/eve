@@ -22,6 +22,9 @@ export const EVE_SESSION_ROUTE_PATH = `${EVE_ROUTE_PREFIX}/session`;
 /** Stable route pattern for sending a message to one exact session ID. */
 export const EVE_SESSION_ROUTE_PATTERN = `${EVE_SESSION_ROUTE_PATH}/:sessionId`;
 
+/** Trusted server-only probe for one host-runtime command acceptance key. */
+export const EVE_HOST_RUNTIME_ACCEPTANCE_ROUTE_PATTERN = `${EVE_ROUTE_PREFIX}/host-runtime/acceptance/:acceptanceKey`;
+
 /** Stable route pattern for cancelling one exact session ID. */
 export const EVE_SESSION_CANCEL_ROUTE_PATTERN = `${EVE_SESSION_ROUTE_PATH}/:sessionId/cancel`;
 

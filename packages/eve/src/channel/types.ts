@@ -8,6 +8,7 @@ import type { InputRequest, InputResponse } from "#runtime/input/types.js";
 import type { ChannelAdapter } from "#channel/adapter.js";
 import type { AgentLimitsDefinition } from "#shared/agent-definition.js";
 import type { JsonObject } from "#shared/json.js";
+import type { DurableHostRuntimeContext, HostRuntimeParentLineage } from "#shared/host-runtime.js";
 
 export type { ContextAccessor } from "#context/key.js";
 export type { ChannelInstrumentationProjection } from "#channel/instrumentation.js";
@@ -151,6 +152,8 @@ export type SessionCommand =
   | {
       readonly auth?: SessionAuthContext | null;
       readonly caller?: TurnCaller;
+      /** Framework-private host runtime handoff for this logical turn. */
+      readonly hostRuntime?: DurableHostRuntimeContext;
       readonly kind: "send";
       readonly payload: DeliverPayload;
       readonly requestId?: string;
@@ -204,6 +207,8 @@ export interface DeliverHookPayload {
   readonly auth?: SessionAuthContext | null;
   /** Delegated caller waiting for this turn's settled result. */
   readonly caller?: TurnCaller;
+  /** Framework-private host runtime handoff for this logical turn. */
+  readonly hostRuntime?: DurableHostRuntimeContext;
   /** Inbound channel request id used only for workflow attributes. */
   readonly requestId?: string;
   readonly kind: "deliver";
@@ -262,6 +267,8 @@ export interface SubagentInputRequestHookPayload {
   readonly childContinuationToken: string;
   readonly childSessionId: string;
   readonly event: SubagentInputRequestEvent;
+  /** Parent lineage needed to roll an inherited root runtime across HITL. */
+  readonly inheritedHostRuntimeParent?: HostRuntimeParentLineage;
   readonly kind: "subagent-input-request";
   readonly subagentName: string;
 }
@@ -367,6 +374,8 @@ export interface RunInput {
    * request was accepted with no credentials.
    */
   readonly auth: SessionAuthContext | null;
+  /** Framework-private host runtime handoff for the initial logical turn. */
+  readonly hostRuntime?: DurableHostRuntimeContext;
   /**
    * Session-level capabilities. When omitted, every flag is
    * interpreted as `false`. Channel routes that can reach a human

@@ -29,6 +29,8 @@ import {
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { throwHostRuntimeAtStepBoundary } from "#runtime/host-runtime/preflight.js";
 import {
   registerDynamicToolStepFunction,
   replayDynamicTools,
@@ -230,6 +232,9 @@ async function resolveToolsFromEvent(
 
   for (const outcome of outcomes) {
     if (outcome.status === "rejected") {
+      if (isHostRuntimeError(outcome.reason)) {
+        throwHostRuntimeAtStepBoundary(outcome.reason);
+      }
       log.error(`Dynamic tool resolver (${event.type}) threw — skipping.`, {
         error: toErrorMessage(outcome.reason),
       });

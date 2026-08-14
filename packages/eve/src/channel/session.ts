@@ -9,6 +9,7 @@ import type {
   Runtime,
   SessionAuthContext,
   SessionCallback,
+  SessionCommand,
   SessionSendCommandResult,
   TurnCaller,
 } from "#channel/types.js";
@@ -17,6 +18,7 @@ import type { SessionAuth } from "#context/keys.js";
 import { AuthKey, ContinuationTokenKey, InitiatorAuthKey, SessionIdKey } from "#context/keys.js";
 import type { InputResponse } from "#runtime/input/types.js";
 import type { JsonObject } from "#shared/json.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 import { toChannelLocalContinuationToken } from "#shared/continuation-token.js";
 
 /** Immutable-ID handle for one exact durable session. */
@@ -52,6 +54,30 @@ interface SessionDeliveryOptions {
   readonly outputSchema?: JsonObject;
 }
 
+const HOST_RUNTIME_DELIVERY = Symbol("eve.host-runtime-delivery");
+type InternalSessionDeliveryOptions = SessionDeliveryOptions & {
+  readonly [HOST_RUNTIME_DELIVERY]?: DurableHostRuntimeContext;
+};
+type MutableSessionSendCommand = {
+  -readonly [K in keyof Omit<Extract<SessionCommand, { kind: "send" }>, "caller">]: Omit<
+    Extract<SessionCommand, { kind: "send" }>,
+    "caller"
+  >[K];
+};
+
+/** @internal Attaches a non-enumerable host-runtime handoff to channel delivery options. */
+export function attachHostRuntimeDeliveryOptions<T extends SessionDeliveryOptions>(
+  options: T,
+  hostRuntime: DurableHostRuntimeContext | undefined,
+): T {
+  if (hostRuntime === undefined) return options;
+  Object.defineProperty(options, HOST_RUNTIME_DELIVERY, {
+    enumerable: false,
+    value: hostRuntime,
+  });
+  return options;
+}
+
 /** Options for sending a message through a fixed session handle. */
 export type SessionSendOptions = SessionDeliveryOptions;
 
@@ -82,6 +108,7 @@ export function createSession(
   return {
     id,
     async send(message, options) {
+      const hostRuntime = (options as InternalSessionDeliveryOptions)[HOST_RUNTIME_DELIVERY];
       const caller = sessionCallbackToTurnCaller(options.callback);
       const payload: {
         context?: readonly string[];
@@ -90,18 +117,20 @@ export function createSession(
       } = { message: serializeUrlFilePartsInMessage(message) };
       if (options.context !== undefined) payload.context = options.context;
       if (options.outputSchema !== undefined) payload.outputSchema = options.outputSchema;
-      const commandWithoutCaller = {
+      const commandWithoutCaller: MutableSessionSendCommand = {
         auth: options.auth,
         kind: "send" as const,
         payload,
         requestId: metadata.requestId,
       };
+      if (hostRuntime !== undefined) commandWithoutCaller.hostRuntime = hostRuntime;
       return await runtime.dispatchSession({
         command: caller === undefined ? commandWithoutCaller : { ...commandWithoutCaller, caller },
         sessionId: id,
       });
     },
     async respond(inputResponses, options) {
+      const hostRuntime = (options as InternalSessionDeliveryOptions)[HOST_RUNTIME_DELIVERY];
       if (inputResponses.length === 0) {
         throw new Error("respond() requires at least one input response.");
       }
@@ -113,12 +142,13 @@ export function createSession(
       } = { inputResponses };
       if (options.context !== undefined) payload.context = options.context;
       if (options.outputSchema !== undefined) payload.outputSchema = options.outputSchema;
-      const commandWithoutCaller = {
+      const commandWithoutCaller: MutableSessionSendCommand = {
         auth: options.auth,
         kind: "send" as const,
         payload,
         requestId: metadata.requestId,
       };
+      if (hostRuntime !== undefined) commandWithoutCaller.hostRuntime = hostRuntime;
       return await runtime.dispatchSession({
         command: caller === undefined ? commandWithoutCaller : { ...commandWithoutCaller, caller },
         sessionId: id,

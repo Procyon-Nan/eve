@@ -2,6 +2,7 @@ import type { DeliverPayload, SessionAuthContext } from "#channel/types.js";
 import { coalesceDeliverPayloads } from "#execution/deliver-payloads.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { routeProxiedDeliverStep, type RoutedDeliverResult } from "#execution/workflow-steps.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 /**
  * Coalesces inbound deliver payloads and routes any descendant-bound input
@@ -15,6 +16,7 @@ import { routeProxiedDeliverStep, type RoutedDeliverResult } from "#execution/wo
  */
 export async function routeDeliverToChildren(input: {
   readonly auth?: SessionAuthContext | null;
+  readonly hostRuntime?: DurableHostRuntimeContext;
   readonly parentWritable: WritableStream<Uint8Array>;
   readonly payloads: readonly DeliverPayload[];
   readonly sessionState: DurableSessionState;
@@ -26,6 +28,7 @@ export async function routeDeliverToChildren(input: {
 
   return await routeProxiedDeliverStep({
     auth: input.auth,
+    hostRuntime: input.hostRuntime,
     parentWritable: input.parentWritable,
     payload,
     sessionState: input.sessionState,

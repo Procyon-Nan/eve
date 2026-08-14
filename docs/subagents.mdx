@@ -99,6 +99,31 @@ module in that dynamic subagent.
 See [Dynamic capabilities](./guides/dynamic-capabilities#dynamic-subagents) for
 scope precedence, failure behavior, and the dispatch-time guard.
 
+### Host-supplied specialist runtimes
+
+A server host can supply a specialist's model, business instructions, and ordinary dynamic tools as one locked runtime snapshot. Declare the provider on both `defineDynamic` and the returned agent so eve can reject an unauthorized specialist before its resolver runs:
+
+```ts title="agent/subagents/reviewer/agent.ts"
+import { defineAgent, defineDynamic, defineHostRuntime } from "eve";
+
+const runtime = defineHostRuntime({ providerKind: "my-host" });
+
+export default defineDynamic({
+  runtime,
+  events: {
+    "turn.started": () =>
+      defineAgent({
+        description: "Review the delegated work.",
+        runtime,
+      }),
+  },
+});
+```
+
+Host-runtime specialists are turn-scoped, one-shot local subagents. They cannot use `experimental.subagentPersistentSessions`, select a separate model or compaction model, or delegate to another host-runtime specialist. The provider authorizes names from the top-level root snapshot and eve checks the authorization again immediately before creating the child reference.
+
+The specialist directory still owns its static safety instructions, sandbox choice, connections, and other authored slots. Use `hostRuntimeInstructions` and `hostRuntimeTools` in dynamic instruction and tool slots to consume the host snapshot without exposing its opaque reference. The built-in `agent` copy reuses the root Turn's snapshot but receives no specialist authorization and does not own a separate release.
+
 Minimum files:
 
 ```text

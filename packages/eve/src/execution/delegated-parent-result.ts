@@ -78,3 +78,21 @@ export function createDelegatedSubagentErrorResult(
     output,
   };
 }
+
+/** Cancellation-path mirror with an explicit terminal cancelled outcome. */
+export function createDelegatedSubagentCancelledResult(
+  serializedContext: Record<string, unknown>,
+): RuntimeSubagentChildResult | undefined {
+  const success = createDelegatedSubagentSuccessResult(serializedContext, "");
+  if (success === undefined) return undefined;
+  return {
+    ...success,
+    isError: true,
+    outcome: {
+      kind: "terminal",
+      result: { kind: "cancelled" },
+      usageDelta: ZERO_TOKEN_USAGE,
+    },
+    output: { code: "SUBAGENT_CANCELLED", message: "The delegated run was cancelled." },
+  };
+}

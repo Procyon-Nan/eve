@@ -27,6 +27,7 @@ export function sendCommandToDelivery(
   return {
     auth: command.auth,
     caller: command.caller,
+    hostRuntime: command.hostRuntime,
     kind: "deliver",
     payload: command.payload,
     payloads: [command.payload],
