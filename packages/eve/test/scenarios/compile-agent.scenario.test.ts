@@ -1048,6 +1048,53 @@ describe("compileAgent", () => {
     expect(result.manifest.subagents[0]?.agent.config.name).toBe("researcher");
   });
 
+  it("compiles a host-runtime dynamic subagent from authored TypeScript", async () => {
+    const app = await scenarioApp({
+      name: "host-runtime-dynamic-subagent",
+      installDependencies: true,
+      files: {
+        "agent/agent.ts": [
+          'import { defineAgent } from "eve";',
+          "",
+          "export default defineAgent({",
+          '  model: "openai/gpt-5.4",',
+          "});",
+          "",
+        ].join("\n"),
+        "agent/instructions.md": "Delegate review work to the reviewer.\n",
+        "agent/subagents/reviewer/agent.ts": [
+          'import { defineAgent, defineDynamic, defineHostRuntime } from "eve";',
+          "",
+          'const runtime = defineHostRuntime({ providerKind: "baigong-agent" });',
+          "",
+          "export default defineDynamic({",
+          "  runtime,",
+          "  events: {",
+          '    "turn.started": () =>',
+          "      defineAgent({",
+          '        description: "Review the delegated work.",',
+          "        runtime,",
+          "      }),",
+          "  },",
+          "});",
+          "",
+        ].join("\n"),
+        "agent/subagents/reviewer/instructions.md": "Review the delegated work.\n",
+      },
+    });
+
+    const result = await compileAgent({ startPath: app.appRoot });
+
+    expect(result.manifest.subagents).toHaveLength(1);
+    expect(result.manifest.subagents[0]).toMatchObject({
+      dynamic: { eventNames: ["turn.started"] },
+      logicalPath: "subagents/reviewer",
+      name: "reviewer",
+      sourceId: "subagents/reviewer",
+    });
+    expect(result.manifest.subagents[0]).not.toHaveProperty("runtime");
+  });
+
   it("compiles remote subagents into the owning node manifest", async () => {
     const { agentRoot, appRoot } = await createAppRoot(
       "eve-compile-remote-subagent-owned-manifest-",

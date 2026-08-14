@@ -22,6 +22,7 @@ import {
   expectString,
 } from "#internal/authored-module.js";
 import { EVE_SESSION_ROUTE_PATH } from "#protocol/routes.js";
+import { validateHostRuntimeDefinition } from "#runtime/host-runtime/validation.js";
 import { DEFAULT_AGENT_MODEL_ID } from "#shared/default-agent-model.js";
 import { serializeOutputSchema, type ToolSchemaSource } from "#shared/tool-schema.js";
 import type { JsonObject } from "#shared/json.js";
@@ -309,13 +310,15 @@ function normalizeDynamicSubagentDefinition(
       `${message} Dynamic subagent definitions do not support "fallback". Return defineAgent(...) or defineRemoteAgent(...) from an event handler instead.`,
     );
   }
-  expectOnlyKnownKeys(record, ["build", "events", "kind"], message);
+  expectOnlyKnownKeys(record, ["build", "events", "kind", "runtime"], message);
 
   const build =
     record.build === undefined
       ? undefined
       : normalizeAgentDefinition({ build: record.build, model: DEFAULT_AGENT_MODEL_ID }, message)
           .build;
+  const runtime =
+    record.runtime === undefined ? undefined : validateHostRuntimeDefinition(record.runtime);
   const rawEvents = expectObjectRecord(record.events, message);
   const eventNames: DynamicToolEventName[] = [];
 
@@ -327,6 +330,10 @@ function normalizeDynamicSubagentDefinition(
     }
     expectFunction(handler, message);
     eventNames.push(eventName as DynamicToolEventName);
+  }
+
+  if (runtime !== undefined && eventNames.some((eventName) => eventName !== "turn.started")) {
+    throw new Error(`${message} Host-runtime subagents may only handle turn.started.`);
   }
 
   const normalized: {

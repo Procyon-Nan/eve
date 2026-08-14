@@ -1,5 +1,11 @@
 # eve
 
+## 0.31.2-baigong.3
+
+### Patch Changes
+
+- Allow documented turn-scoped host-runtime dynamic subagents to pass source compilation while preserving compile-time validation of runtime declarations and event scope.
+
 ## 0.31.2-baigong.2
 
 ### Patch Changes

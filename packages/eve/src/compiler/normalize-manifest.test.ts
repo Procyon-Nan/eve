@@ -10,7 +10,7 @@ import { classifyModelRouting } from "#internal/classify-model-routing.js";
 import type { CompiledAgentDefinition } from "#compiler/manifest.js";
 import { compileAgentManifest } from "#compiler/normalize-manifest.js";
 import { collectModuleRefsForManifest } from "#compiler/module-map.js";
-import { defineAgent, defineDynamic } from "#public/definitions/agent.js";
+import { defineAgent, defineDynamic, defineHostRuntime } from "#public/definitions/agent.js";
 import { experimental_workflow } from "#public/definitions/tool.js";
 import { webSearch } from "#public/tools/web-search.js";
 import { DEFAULT_AGENT_MODEL_ID } from "#shared/default-agent-model.js";
@@ -220,6 +220,82 @@ describe("compileAgentManifest", () => {
     expect(mocks.compileAgentConfig.mock.calls[1]?.[2]).toMatchObject({
       definition: { model: DEFAULT_AGENT_MODEL_ID },
     });
+  });
+
+  it("compiles a turn-scoped host-runtime dynamic subagent", async () => {
+    const runtime = defineHostRuntime({ providerKind: "baigong-agent" });
+    const dynamic = defineDynamic({
+      runtime,
+      events: {
+        "turn.started": () =>
+          defineAgent({
+            description: "Review the request.",
+            runtime,
+          }),
+      },
+    });
+    const manifest = createManifestWithSubagent();
+    mocks.compileAgentConfig.mockImplementation(async (input: AgentSourceManifest) =>
+      createConfig({ name: input.agentId }),
+    );
+    mocks.loadModuleBackedDefinition.mockResolvedValue(dynamic);
+
+    const compiled = await compileAgentManifest(manifest);
+
+    expect(compiled.subagents[0]?.dynamic).toEqual({
+      eventNames: ["turn.started"],
+    });
+    expect(compiled.subagents[0]?.description).toBeUndefined();
+    expect(compiled.subagents[0]).not.toHaveProperty("runtime");
+    expect(mocks.compileAgentConfig.mock.calls[1]?.[2]).toMatchObject({
+      definition: { model: DEFAULT_AGENT_MODEL_ID },
+    });
+  });
+
+  it.each([
+    ["session.started", { "session.started": (): null => null }],
+    [
+      "session.started and turn.started",
+      { "session.started": (): null => null, "turn.started": (): null => null },
+    ],
+  ])("rejects host-runtime dynamic subagents handling %s", async (_label, events) => {
+    mocks.compileAgentConfig.mockResolvedValue(createConfig({ name: "root" }));
+    mocks.loadModuleBackedDefinition.mockResolvedValue({
+      events,
+      kind: "eve:dynamic",
+      runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+    });
+
+    await expect(compileAgentManifest(createManifestWithSubagent())).rejects.toThrow(
+      "Host-runtime subagents may only handle turn.started.",
+    );
+  });
+
+  it("rejects invalid host-runtime declarations on dynamic subagents", async () => {
+    mocks.compileAgentConfig.mockResolvedValue(createConfig({ name: "root" }));
+    mocks.loadModuleBackedDefinition.mockResolvedValue({
+      events: { "turn.started": () => null },
+      kind: "eve:dynamic",
+      runtime: { kind: "eve.host-runtime", providerKind: "Baigong Agent" },
+    });
+
+    await expect(compileAgentManifest(createManifestWithSubagent())).rejects.toMatchObject({
+      code: "HOST_RUNTIME_REFERENCE_INVALID",
+    });
+  });
+
+  it("continues rejecting unknown dynamic subagent fields", async () => {
+    mocks.compileAgentConfig.mockResolvedValue(createConfig({ name: "root" }));
+    mocks.loadModuleBackedDefinition.mockResolvedValue({
+      events: { "turn.started": () => null },
+      kind: "eve:dynamic",
+      runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+      unexpected: true,
+    });
+
+    await expect(compileAgentManifest(createManifestWithSubagent())).rejects.toThrow(
+      'Unknown key "unexpected"',
+    );
   });
 
   it("applies dynamic subagent build configuration before resolving events", async () => {
