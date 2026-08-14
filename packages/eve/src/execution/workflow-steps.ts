@@ -16,6 +16,7 @@ import {
 import {
   AuthKey,
   CapabilitiesKey,
+  HostRuntimePreflightKey,
   ModeKey,
   ParentSessionKey,
   SessionDynamicSubagentRuntimeRevisionKey,
@@ -160,9 +161,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
-  const hostRuntime = await prepareHostRuntimePreflightAtStepBoundary(ctx);
   const adapter = ctx.require(ChannelKey);
   const bundle = ctx.require(BundleKey);
+  const hostRuntime = await prepareHostRuntimePreflightAtStepBoundary(ctx);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
 
   // Populate the callback base URL so getHookUrl() works during tool
@@ -405,6 +406,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // or the pending batch would re-park and later re-dispatch.
     throwIfTurnAborted(input.abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
+      // runStep rebuilds step-local providers, so restore the one preflight
+      // snapshot already used to project the effective specialist model.
+      if (hostRuntime !== undefined) {
+        ctx.setVirtualContext(HostRuntimePreflightKey, hostRuntime);
+      }
       const schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
         input: resolved,

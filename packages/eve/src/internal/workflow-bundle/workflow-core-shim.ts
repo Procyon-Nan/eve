@@ -8,7 +8,25 @@ const workflowGlobal = globalThis as typeof globalThis & Record<symbol, unknown>
 
 export class RetryableError extends Error {}
 
-export class FatalError extends Error {}
+export class FatalError extends Error {
+  readonly fatal = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "FatalError";
+  }
+
+  static is(value: unknown): value is FatalError {
+    if (!isErrorLike(value)) return false;
+    return value.name === "FatalError" || value.fatal === true;
+  }
+}
+
+function isErrorLike(
+  value: unknown,
+): value is { readonly fatal?: unknown; readonly message: unknown; readonly name: unknown } {
+  return typeof value === "object" && value !== null && "name" in value && "message" in value;
+}
 
 interface WorkflowHook<T> extends AsyncIterable<T> {
   readonly token: string;

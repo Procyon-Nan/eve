@@ -454,6 +454,106 @@ describe("WorkflowBundleBuilder", () => {
     }
   });
 
+  it("executes FatalError classification from the real workflow bundle", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-bundle-fatal-error-"));
+    const outDir = join(tempRoot, "workflow-build");
+    const flowFilePath = join(tempRoot, "flow.ts");
+    const compiledArtifactsBootstrapPath = join(tempRoot, "compiled-artifacts-bootstrap.mjs");
+    const finalizationPath = resolvePackageSourceFilePath(
+      "src/execution/workflow-entry-finalization.ts",
+    ).replaceAll("\\", "/");
+    const previousWorkflowRegistry = (
+      globalThis as typeof globalThis & { __private_workflows?: unknown }
+    ).__private_workflows;
+    const workflowUseStep = Symbol.for("WORKFLOW_USE_STEP");
+    const workflowGlobal = globalThis as typeof globalThis & Record<symbol, unknown>;
+    const previousWorkflowUseStep = workflowGlobal[workflowUseStep];
+
+    try {
+      workflowGlobal[workflowUseStep] = () => async () => undefined;
+      await Promise.all([
+        writeFile(
+          compiledArtifactsBootstrapPath,
+          [
+            "export async function __eveInstallCompiledArtifactsStep() {",
+            '  "use step";',
+            "  return null;",
+            "}",
+            "",
+          ].join("\n"),
+        ),
+        writeFile(
+          flowFilePath,
+          [
+            `import { readFatalHostRuntimeErrorCode } from ${JSON.stringify(finalizationPath)};`,
+            "export async function classifyHostRuntimeError(error) {",
+            '  "use workflow";',
+            "  return readFatalHostRuntimeErrorCode(error);",
+            "}",
+            "",
+          ].join("\n"),
+        ),
+      ]);
+
+      const builder = new FixtureWorkflowBundleBuilder(
+        {
+          agentName: "test-agent",
+          appRoot: tempRoot,
+          compiledArtifactsBootstrapPath,
+          outDir,
+          rootDir: resolvePackageRoot(),
+          watch: false,
+        },
+        [flowFilePath],
+      );
+
+      await builder.build();
+
+      const workflowsSource = await readFile(join(outDir, "workflows.mjs"), "utf8");
+      const encodedChunksMatch = workflowsSource.match(
+        /Buffer\.from\((\[[\s\S]*?\])\.join\(""\), "base64"\)\.toString\("utf8"\)/,
+      );
+      expect(encodedChunksMatch).not.toBeNull();
+
+      const encodedChunks = JSON.parse(encodedChunksMatch?.[1] ?? "[]") as string[];
+      const decodedWorkflowCode = Buffer.from(encodedChunks.join(""), "base64").toString("utf8");
+
+      Function(decodedWorkflowCode)();
+      const workflowRegistry = (globalThis as typeof globalThis & { __private_workflows?: unknown })
+        .__private_workflows;
+      expect(workflowRegistry).toBeInstanceOf(Map);
+      const classifyHostRuntimeError = [
+        ...(workflowRegistry as Map<string, (error: unknown) => Promise<unknown>>).entries(),
+      ].find(([id]) => id.endsWith("//classifyHostRuntimeError"))?.[1];
+      expect(classifyHostRuntimeError).toBeTypeOf("function");
+
+      await expect(
+        classifyHostRuntimeError?.({
+          message: "HOST_RUNTIME_VERSION_UNAVAILABLE",
+          name: "FatalError",
+        }),
+      ).resolves.toBe("HOST_RUNTIME_VERSION_UNAVAILABLE");
+      await expect(
+        classifyHostRuntimeError?.(new Error("HOST_RUNTIME_VERSION_UNAVAILABLE")),
+      ).resolves.toBeUndefined();
+    } finally {
+      const workflowRegistryGlobal = globalThis as typeof globalThis & {
+        __private_workflows?: unknown;
+      };
+      if (previousWorkflowRegistry === undefined) {
+        delete workflowRegistryGlobal.__private_workflows;
+      } else {
+        workflowRegistryGlobal.__private_workflows = previousWorkflowRegistry;
+      }
+      if (previousWorkflowUseStep === undefined) {
+        delete workflowGlobal[workflowUseStep];
+      } else {
+        workflowGlobal[workflowUseStep] = previousWorkflowUseStep;
+      }
+      await rm(tempRoot, { force: true, recursive: true });
+    }
+  });
+
   it("allows a node builtin used only inside a use step body", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "eve-workflow-bundle-node-step-ok-"));
     const outDir = join(tempRoot, "workflow-build");

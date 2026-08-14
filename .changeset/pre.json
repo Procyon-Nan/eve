@@ -38,6 +38,7 @@
     "bright-files-opt-out",
     "calm-tools-project-output",
     "fixed-host-runtime-subagent-compilation",
+    "fixed-workflow-fatal-error-contract",
     "quiet-conversations-recover",
     "quiet-data-directories",
     "locked-host-runtime-references",

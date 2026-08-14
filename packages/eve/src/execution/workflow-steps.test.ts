@@ -8,6 +8,7 @@ import {
   AuthKey,
   ContinuationTokenKey,
   DynamicSubagentAgentConfigKey,
+  HostRuntimeContextKey,
   ModeKey,
   SessionDynamicSubagentSelectionsKey,
   SessionDynamicToolMetadataKey,
@@ -25,6 +26,7 @@ import { setPendingInputBatch } from "#harness/input-requests.js";
 import type { HarnessSession, StepResult } from "#harness/types.js";
 import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
+import { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
 import {
   createDurableSessionState,
   DURABLE_SESSION_VERSION,
@@ -1129,6 +1131,113 @@ describe("turnStep", () => {
     expect(createExecutionNodeStep).toHaveBeenCalledWith(
       expect.objectContaining({ node: effectiveNode }),
     );
+  });
+
+  it("retains the resolved host runtime while rebuilding step-local providers", async () => {
+    const session = createStubSession();
+    installSessionStoreMocks([session]);
+    vi.mocked(createExecutionNodeStep).mockImplementation(() => {
+      return async (stepSession): Promise<StepResult> => ({
+        next: { done: true, output: "ok" },
+        session: stepSession,
+      });
+    });
+    const compiledBundle = {
+      adapterRegistry: {
+        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
+      },
+      compiledArtifactsSource: {} as never,
+      graph: {
+        nodesByNodeId: new Map(),
+        root: {
+          sandboxRegistry: { sandbox: null },
+          turnAgent: TestTurnAgent,
+        },
+      },
+      moduleMap: { nodes: {} },
+      hookRegistry: createEmptyHookRegistry(),
+      resolvedAgent: { config: {} },
+      subagentRegistry: {},
+      toolRegistry: {},
+      turnAgent: TestTurnAgent,
+    } as never;
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(compiledBundle);
+
+    const parent = {
+      callId: "call-1",
+      rootSessionId: "root-session",
+      sessionId: "root-session",
+      subagentName: "reviewer",
+      turnId: "turn-1",
+    } as const;
+    const reference = { providerKind: "workflow-steps-test", value: "specialist-reference" };
+    const resolve = vi.fn(async () => ({
+      contextWindowTokens: 128_000,
+      model: {
+        doGenerate: vi.fn(),
+        doStream: vi.fn(),
+        modelId: "host-model",
+        provider: "test",
+        specificationVersion: "v3" as const,
+      } as never,
+      modelId: "host-model",
+    }));
+    const unregister = registerHostRuntimeProvider({
+      providerKind: reference.providerKind,
+      resolve,
+    });
+
+    try {
+      const ctx = new ContextContainer();
+      ctx.set(AuthKey, null);
+      ctx.set(BundleKey, compiledBundle);
+      ctx.set(ChannelKey, threadContextAdapter);
+      ctx.set(ContinuationTokenKey, "host-runtime-specialist");
+      ctx.set(DynamicSubagentAgentConfigKey, {
+        description: "Review the work.",
+        runtime: {
+          kind: "eve.host-runtime",
+          parent,
+          providerKind: reference.providerKind,
+          reference,
+        },
+      });
+      ctx.set(HostRuntimeContextKey, {
+        ownership: "specialist",
+        parent,
+        reference,
+      });
+      ctx.set(ModeKey, "task");
+      ctx.set(SessionIdKey, "specialist-session");
+
+      await turnStep({
+        input: {
+          kind: "deliver",
+          payloads: [{ message: "review this" }],
+        },
+        parentWritable: createTestWritable(),
+        serializedContext: serializeContext(ctx),
+        sessionState: createStubSessionState({ sessionId: "specialist-session" }),
+      });
+
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(createExecutionNodeStep).toHaveBeenCalledWith(
+        expect.objectContaining({
+          node: expect.objectContaining({
+            turnAgent: expect.objectContaining({
+              model: expect.objectContaining({
+                contextWindowTokens: 128_000,
+                id: "host-model",
+                reference,
+                type: "host-runtime",
+              }),
+            }),
+          }),
+        }),
+      );
+    } finally {
+      unregister();
+    }
   });
 
   it("carries a settled turn through the typed park action when no work remains pending", async () => {

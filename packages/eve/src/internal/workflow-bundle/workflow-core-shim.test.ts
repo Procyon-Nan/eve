@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sleep } from "#internal/workflow-bundle/workflow-core-shim.js";
+import { FatalError, sleep } from "#internal/workflow-bundle/workflow-core-shim.js";
 
 const WORKFLOW_SLEEP = Symbol.for("WORKFLOW_SLEEP");
 const workflowGlobal = globalThis as typeof globalThis & Record<symbol, unknown>;
@@ -28,4 +28,23 @@ describe("workflow core shim sleep", () => {
 
     expect(() => sleep(2_500)).toThrow("`sleep()` can only be called inside a workflow function");
   });
+});
+
+describe("workflow core shim FatalError", () => {
+  it("matches the workflow errors fatal contract", () => {
+    const error = new FatalError("x");
+
+    expect(error.name).toBe("FatalError");
+    expect(error.fatal).toBe(true);
+    expect(FatalError.is(error)).toBe(true);
+    expect(FatalError.is({ message: "x", name: "FatalError" })).toBe(true);
+    expect(FatalError.is({ fatal: true, message: "x", name: "OtherError" })).toBe(true);
+  });
+
+  it.each([new Error("x"), { message: "x" }, { name: "FatalError" }, null, "FatalError"])(
+    "rejects non-fatal values: %o",
+    (value) => {
+      expect(FatalError.is(value)).toBe(false);
+    },
+  );
 });
