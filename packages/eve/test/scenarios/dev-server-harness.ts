@@ -78,7 +78,8 @@ export async function signalEveDevDuringStartup(
  * Spawns `eve dev --no-ui` for the app and resolves once the server URL is
  * printed and the state record exists. `NODE_ENV=test` activates the
  * deterministic mock-model adapter so streamed turns complete without model
- * credentials.
+ * credentials. A scenario may override `NODE_ENV` through `options.env` when
+ * it needs to exercise an authored in-process model implementation.
  */
 export async function startEveDev(
   appRoot: string,
@@ -224,8 +225,8 @@ function spawnEveDev(
     cwd: appRoot,
     env: {
       ...process.env,
-      ...options.env,
       NODE_ENV: "test",
+      ...options.env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

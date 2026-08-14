@@ -37,6 +37,7 @@ import { DEFAULT_SESSION_TIMEOUT_MS } from "#execution/session-timeout.js";
 import { createSessionTimeoutControl } from "#execution/session-timeout-control.js";
 import { readSerializedSubagentDepth } from "#harness/subagent-depth.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 import { releaseHostRuntimeStep } from "#execution/host-runtime-release-step.js";
 import { settleHostRuntimeFailureStep } from "#execution/settle-host-runtime-failure-step.js";
 import { settleHostRuntimeReleasesStep } from "#execution/settle-host-runtime-releases-step.js";
@@ -172,11 +173,15 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
     const dynamicSubagentAgentConfig = input.serializedContext["eve.dynamicSubagentAgentConfig"] as
       | DynamicSubagentAgentConfig
       | undefined;
+    const hostRuntime = input.serializedContext["eve.hostRuntime"] as
+      | DurableHostRuntimeContext
+      | undefined;
 
     const { state: sessionState } = await createSessionStep({
       compiledArtifactsSource: serializedBundle.source,
       continuationToken,
       dynamicSubagentAgentConfig,
+      hostRuntime,
       inheritedLimits: input.limits,
       nodeId: serializedBundle.nodeId,
       outputSchema: input.input.outputSchema,

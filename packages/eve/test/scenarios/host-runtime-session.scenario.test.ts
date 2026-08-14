@@ -66,13 +66,13 @@ const HOST_RUNTIME_DESCRIPTOR: ScenarioAppDescriptor = {
       "",
       "function createResult(kind, options) {",
       "  const delegated = options.prompt.some(",
-      '    (message) => message.role === "tool" && JSON.stringify(message.content).includes("call_agent"),',
+      '    (message) => message.role === "tool" && JSON.stringify(message.content).includes("call_reviewer"),',
       "  );",
       '  const content = kind === "root" && !delegated',
       "    ? [{",
       '        input: JSON.stringify({ message: "Review the scenario contract." }),',
-      '        toolCallId: "call_agent",',
-      '        toolName: "agent",',
+      '        toolCallId: "call_reviewer",',
+      '        toolName: "reviewer",',
       '        type: "tool-call",',
       "      }]",
       '    : [{ text: kind === "root" ? "root-complete" : "reviewer-complete", type: "text" }];',
@@ -210,7 +210,9 @@ describe("host runtime session workflow", () => {
     "runs a root turn with a discoverable dynamic specialist through the workflow bundle",
     async () => {
       const app = await scenarioApp(HOST_RUNTIME_DESCRIPTOR);
-      const server = await startEveDev(app.appRoot);
+      const server = await startEveDev(app.appRoot, {
+        env: { NODE_ENV: "development" },
+      });
 
       try {
         const info = await fetchAgentInfo(server.url);
@@ -246,10 +248,14 @@ describe("host runtime session workflow", () => {
           10_000,
         );
         const output = `${server.stdout()}\n${server.stderr()}`;
+        expect(failureContext).toContain("reviewer-complete");
         expect(output).toContain("SCENARIO_HOST_RUNTIME_RESOLVE:root");
         expect(output).toContain("SCENARIO_HOST_RUNTIME_MODEL:root-model");
         expect(output).toContain("SCENARIO_HOST_RUNTIME_INSTRUCTIONS:root-instructions");
         expect(output).toContain("SCENARIO_HOST_RUNTIME_TOOLS:host_probe");
+        expect(output).toContain("SCENARIO_HOST_RUNTIME_CREATE:reviewer");
+        expect(output).toContain("SCENARIO_HOST_RUNTIME_RESOLVE:reviewer");
+        expect(output).toContain("SCENARIO_HOST_RUNTIME_RELEASE:reviewer:call_reviewer:completed");
         expect(output).toContain("SCENARIO_HOST_RUNTIME_RELEASE:root-reference:completed");
         expect(output).not.toContain("FatalError.is is not a function");
       } finally {

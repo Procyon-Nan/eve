@@ -18,6 +18,85 @@ const TestTurnAgent: RuntimeTurnAgent = {
 };
 
 describe("createSessionStep", () => {
+  it("seeds a specialist session from its matching durable host runtime", async () => {
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
+      resolvedAgent: { config: {} },
+      turnAgent: TestTurnAgent,
+    } as never);
+    const parent = {
+      callId: "call-reviewer",
+      rootSessionId: "root-session",
+      sessionId: "root-session",
+      subagentName: "reviewer",
+      turnId: "turn-1",
+    } as const;
+    const reference = { providerKind: "test-host", value: "reviewer-reference" } as const;
+
+    const { state } = await createSessionStep({
+      compiledArtifactsSource: { kind: "bundled" },
+      continuationToken: "subagent:test",
+      dynamicSubagentAgentConfig: {
+        description: "Review the work.",
+        runtime: {
+          kind: "eve.host-runtime",
+          parent,
+          providerKind: reference.providerKind,
+          reference,
+        },
+      },
+      hostRuntime: { ownership: "specialist", parent, reference },
+      nodeId: "subagents/reviewer",
+      rootSessionId: "root-session",
+      sessionId: "sess-child",
+      subagentDepth: 1,
+    });
+
+    expect(state.sessionId).toBe("sess-child");
+    expect(state.snapshot?.session.rootSessionId).toBe("root-session");
+  });
+
+  it("rejects a specialist session whose durable host runtime does not match its config", async () => {
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
+      resolvedAgent: { config: {} },
+      turnAgent: TestTurnAgent,
+    } as never);
+    const parent = {
+      callId: "call-reviewer",
+      rootSessionId: "root-session",
+      sessionId: "root-session",
+      subagentName: "reviewer",
+      turnId: "turn-1",
+    } as const;
+
+    await expect(
+      createSessionStep({
+        compiledArtifactsSource: { kind: "bundled" },
+        continuationToken: "subagent:test",
+        dynamicSubagentAgentConfig: {
+          description: "Review the work.",
+          runtime: {
+            kind: "eve.host-runtime",
+            parent,
+            providerKind: "test-host",
+            reference: { providerKind: "test-host", value: "config-reference" },
+          },
+        },
+        hostRuntime: {
+          ownership: "specialist",
+          parent,
+          reference: { providerKind: "test-host", value: "durable-reference" },
+        },
+        nodeId: "subagents/reviewer",
+        rootSessionId: "root-session",
+        sessionId: "sess-child",
+        subagentDepth: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "HOST_RUNTIME_REFERENCE_INVALID",
+      name: "HostRuntimeError",
+    });
+  });
+
   it("defaults root sessions to the root input token budget", async () => {
     vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
       resolvedAgent: {

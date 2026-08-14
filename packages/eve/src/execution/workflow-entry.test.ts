@@ -334,6 +334,36 @@ describe("workflowEntry", () => {
     );
   });
 
+  it("passes the durable specialist host runtime to session creation", async () => {
+    const sessionState = createBaseSessionState();
+    const parent = {
+      callId: "call-reviewer",
+      rootSessionId: "root-session",
+      sessionId: "root-session",
+      subagentName: "reviewer",
+      turnId: "turn-1",
+    } as const;
+    const reference = { providerKind: "test-host", value: "reviewer-reference" } as const;
+    const hostRuntime = { ownership: "specialist" as const, parent, reference };
+    vi.mocked(createSessionStep).mockResolvedValue(createSessionStepResultForMock(sessionState));
+    installHookMocks({
+      turnControls: [turnResult({ action: "done", output: "ok", sessionState })],
+    });
+
+    await workflowEntry({
+      input: { message: "review this" },
+      serializedContext: createSerializedContext({
+        "eve.hostRuntime": hostRuntime,
+      }),
+    });
+
+    expect(createSessionStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostRuntime,
+      }),
+    );
+  });
+
   it("completes a parked session when its durable deadline elapses", async () => {
     const sessionState = createBaseSessionState();
     const dispose = vi.fn();
