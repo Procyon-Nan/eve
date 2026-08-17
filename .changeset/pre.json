@@ -39,9 +39,10 @@
     "calm-tools-project-output",
     "fixed-host-runtime-subagent-compilation",
     "fixed-workflow-fatal-error-contract",
+    "locked-host-runtime-references",
     "quiet-conversations-recover",
     "quiet-data-directories",
-    "locked-host-runtime-references",
+    "steady-subagent-replays",
     "steady-subagents-lineage",
     "warm-subagents-delegate"
   ]
