@@ -85,10 +85,8 @@ import {
   prepareHostRuntimePreflightAtStepBoundary,
 } from "#runtime/host-runtime/preflight.js";
 import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
-import {
-  startLocalSubagent,
-  type DynamicSubagentAgentConfig,
-} from "#execution/dispatch-local-subagent.js";
+import { startLocalSubagent } from "#execution/dispatch-local-subagent.js";
+import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 
 const log = createLogger("execution.dispatch-runtime-actions");
 

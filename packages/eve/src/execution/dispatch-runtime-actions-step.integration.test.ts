@@ -4,6 +4,7 @@ import type { ChannelAdapter } from "#channel/adapter.js";
 import { RemoteAgentContinueRequestError } from "#execution/remote-agent-dispatch.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
+import { RuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import {
   resolvePendingRuntimeActions,
   setPendingRuntimeActionBatch,
@@ -32,6 +33,9 @@ const mocks = vi.hoisted(() => ({
   hydrateDurableSession: vi.fn(),
   readDurableSession: vi.fn(),
   createSession: vi.fn(),
+  cancelSessionStart: vi.fn(),
+  inspectSessionStart: vi.fn(),
+  resolveContinuation: vi.fn(),
   startRemoteAgentSession: vi.fn(),
 }));
 
@@ -51,8 +55,11 @@ vi.mock("#execution/session.js", () => ({
 
 vi.mock("#execution/workflow-runtime.js", () => ({
   createWorkflowRuntime: () => ({
+    cancelSessionStart: mocks.cancelSessionStart,
     createSession: mocks.createSession,
     dispatchSession: mocks.dispatchSession,
+    inspectSessionStart: mocks.inspectSessionStart,
+    resolveContinuation: mocks.resolveContinuation,
   }),
   workflowEntryReference: { workflowId: "workflow//eve//workflowEntry" },
 }));
@@ -127,6 +134,8 @@ const REMOTE_REGISTRY_DEFINITION = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.createSession.mockResolvedValue({ sessionId: CHILD_SESSION_ID });
+  mocks.cancelSessionStart.mockResolvedValue("cancelled");
+  mocks.resolveContinuation.mockResolvedValue(undefined);
   mocks.dispatchSession.mockResolvedValue({ sessionId: CHILD_SESSION_ID, status: "accepted" });
   mocks.continueRemoteAgentSession.mockResolvedValue(undefined);
   mocks.startRemoteAgentSession.mockResolvedValue({
@@ -227,6 +236,124 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({
       handles: [],
     });
+  });
+
+  it("recovers a matching existing owner before creating another local child", async () => {
+    const session = createStartSession({ kind: "local" });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    mocks.resolveContinuation.mockResolvedValue({ sessionId: "winner-session" });
+    mocks.inspectSessionStart.mockResolvedValue(createOwnerSnapshot());
+    const writes: Uint8Array[] = [];
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(writes),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.cancelSessionStart).not.toHaveBeenCalled();
+    expect(getAgentHandleStore(readResultSessionState(result, session))).toMatchObject({
+      handles: [
+        {
+          address: { sessionId: "winner-session" },
+          phase: "running",
+        },
+      ],
+    });
+    expect(readWrittenEvents(writes)).toHaveLength(1);
+    expect(result.results).toEqual([]);
+  });
+
+  it("recovers the winner and cancels the loser after a typed ownership race", async () => {
+    const session = createStartSession({ kind: "local" });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    mocks.createSession.mockRejectedValue(
+      new RuntimeSessionOwnershipConflictError({
+        continuationToken: "subagent:parent-session:call-1",
+        ownerSessionId: "winner-session",
+        sessionId: "loser-session",
+      }),
+    );
+    mocks.inspectSessionStart.mockResolvedValue(createOwnerSnapshot());
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(mocks.cancelSessionStart).toHaveBeenCalledExactlyOnceWith("loser-session");
+    expect(getAgentHandleStore(readResultSessionState(result, session))).toMatchObject({
+      handles: [{ address: { sessionId: "winner-session" }, phase: "running" }],
+    });
+    expect(result.results).toEqual([]);
+  });
+
+  it("cancels the loser and fails closed when a typed ownership winner mismatches", async () => {
+    const session = createStartSession({ kind: "local" });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    mocks.createSession.mockRejectedValue(
+      new RuntimeSessionOwnershipConflictError({
+        continuationToken: "subagent:parent-session:call-1",
+        ownerSessionId: "other-session",
+        sessionId: "loser-session",
+      }),
+    );
+    mocks.inspectSessionStart.mockResolvedValue(
+      createOwnerSnapshot({ attributes: { "$eve.parent_call": "other-call" } }),
+    );
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(mocks.cancelSessionStart).toHaveBeenCalledExactlyOnceWith("loser-session");
+    expect(result.results[0]).toMatchObject({
+      isError: true,
+      output: { code: "SUBAGENT_START_CONFLICT" },
+    });
+    expect(getAgentHandleStore(readResultSessionState(result, session))).toEqual({ handles: [] });
+  });
+
+  it("fails closed without creating a child when an existing owner has different lineage", async () => {
+    const session = createStartSession({ kind: "local" });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    mocks.resolveContinuation.mockResolvedValue({ sessionId: "other-session" });
+    mocks.inspectSessionStart.mockResolvedValue(
+      createOwnerSnapshot({ attributes: { "$eve.parent_turn": "other-turn" } }),
+    );
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(result.results[0]).toMatchObject({
+      isError: true,
+      output: { code: "SUBAGENT_START_CONFLICT", message: "SUBAGENT_START_CONFLICT" },
+    });
+    expect(getAgentHandleStore(readResultSessionState(result, session))).toBeUndefined();
   });
 
   it("owns a remote child with its confirmed remote address", async () => {
@@ -938,6 +1065,39 @@ function createWritable(writes: Uint8Array[] = []): WritableStream<Uint8Array> {
       writes.push(chunk);
     },
   });
+}
+
+function createOwnerSnapshot(input: { readonly attributes?: Record<string, string> } = {}) {
+  return {
+    attributes: {
+      "$eve.parent": "parent-session",
+      "$eve.parent_call": "call-1",
+      "$eve.parent_turn": "turn-1",
+      "$eve.root": "parent-session",
+      "$eve.subagent": "subagents/research",
+      "$eve.type": "subagent",
+      ...input.attributes,
+    },
+    serializedContext: {
+      "eve.channel": {
+        kind: "subagent",
+        state: {
+          callId: "call-1",
+          parentContinuationToken: "turn-inbox",
+          parentSessionId: "parent-session",
+          subagentName: "research",
+        },
+      },
+      "eve.continuationToken": "subagent:parent-session:call-1",
+      "eve.parentSession": {
+        callId: "call-1",
+        rootSessionId: "parent-session",
+        sessionId: "parent-session",
+        turn: { id: "turn-1", sequence: 1 },
+      },
+    },
+    status: "running",
+  } as const;
 }
 
 function readWrittenEvents(

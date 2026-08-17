@@ -13,6 +13,7 @@ import {
 } from "#context/keys.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { dispatchRuntimeActionsStep } from "#execution/dispatch-runtime-actions-step.js";
+import { RuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import { PENDING_HOST_RUNTIME_RELEASES_STATE_KEY } from "#harness/host-runtime-releases.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import { setPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
@@ -25,10 +26,13 @@ import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js
 
 const mocks = vi.hoisted(() => ({
   createDurableSessionState: vi.fn(),
+  cancelSessionStart: vi.fn(),
   createSession: vi.fn(),
   deserializeContext: vi.fn(),
   hydrateDurableSession: vi.fn(),
   readDurableSession: vi.fn(),
+  inspectSessionStart: vi.fn(),
+  resolveContinuation: vi.fn(),
   runtimeInputs: [] as unknown[],
 }));
 
@@ -50,8 +54,11 @@ vi.mock("#execution/workflow-runtime.js", () => ({
   createWorkflowRuntime: (input: unknown) => {
     mocks.runtimeInputs.push(input);
     return {
+      cancelSessionStart: mocks.cancelSessionStart,
       createSession: mocks.createSession,
       dispatchSession: vi.fn(),
+      inspectSessionStart: mocks.inspectSessionStart,
+      resolveContinuation: mocks.resolveContinuation,
     };
   },
   workflowEntryReference: { workflowId: "workflow//eve//workflowEntry" },
@@ -221,6 +228,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.runtimeInputs.length = 0;
   mocks.createSession.mockResolvedValue({ sessionId: "child-session" });
+  mocks.cancelSessionStart.mockResolvedValue("cancelled");
+  mocks.resolveContinuation.mockResolvedValue(undefined);
   mocks.hydrateDurableSession.mockImplementation(({ durable }) => durable);
   mocks.createDurableSessionState.mockImplementation(({ session }) => ({
     ...BASE_STATE,
@@ -263,7 +272,7 @@ describe("dispatchRuntimeActionsStep specialist host runtime", () => {
         },
       }),
     );
-    expect(mocks.runtimeInputs[0]).toMatchObject({
+    expect(mocks.runtimeInputs.at(-1)).toMatchObject({
       dynamicSubagentAgentConfig: {
         runtime: {
           kind: "eve.host-runtime",
@@ -314,6 +323,118 @@ describe("dispatchRuntimeActionsStep specialist host runtime", () => {
     ]);
   });
 
+  it("recovers a specialist owner before creating a reference or child session", async () => {
+    const createSpecialistReference = vi.fn(async () => specialistReference);
+    mocks.resolveContinuation.mockResolvedValue({ sessionId: "winner-session" });
+    mocks.inspectSessionStart.mockResolvedValue(createSpecialistOwnerSnapshot());
+
+    const { result, session } = await runWithProvider({ createSpecialistReference });
+    const handles = getAgentHandleStore(readResultSessionState(result, session));
+
+    expect(createSpecialistReference).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(handles).toMatchObject({
+      handles: [
+        {
+          address: { sessionId: "winner-session" },
+          hostRuntime: { reference: specialistReference },
+          phase: "running",
+        },
+      ],
+    });
+  });
+
+  it("releases only the temporary specialist reference after a typed ownership race", async () => {
+    const temporaryReference = {
+      providerKind: "baigong-agent",
+      value: "temporary-reference",
+    } as const;
+    const createSpecialistReference = vi.fn(async () => temporaryReference);
+    mocks.createSession.mockRejectedValue(
+      new RuntimeSessionOwnershipConflictError({
+        continuationToken: "subagent:parent-session:call-reviewer",
+        ownerSessionId: "winner-session",
+        sessionId: "loser-session",
+      }),
+    );
+    mocks.inspectSessionStart.mockResolvedValue(createSpecialistOwnerSnapshot());
+
+    const { result, session } = await runWithProvider({ createSpecialistReference });
+    const settledState = readResultSessionState(result, session);
+
+    expect(mocks.cancelSessionStart).toHaveBeenCalledExactlyOnceWith("loser-session");
+    expect(getAgentHandleStore(settledState)).toMatchObject({
+      handles: [
+        {
+          address: { sessionId: "winner-session" },
+          hostRuntime: { reference: specialistReference },
+          phase: "running",
+        },
+      ],
+    });
+    expect(settledState?.[PENDING_HOST_RUNTIME_RELEASES_STATE_KEY]).toEqual([
+      expect.objectContaining({
+        outcome: "start_failed",
+        reference: temporaryReference,
+      }),
+    ]);
+    expect(settledState?.[PENDING_HOST_RUNTIME_RELEASES_STATE_KEY]).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ reference: specialistReference })]),
+    );
+  });
+
+  it("cleans the loser and temporary reference when a typed specialist winner mismatches", async () => {
+    const temporaryReference = {
+      providerKind: "baigong-agent",
+      value: "temporary-reference",
+    } as const;
+    const createSpecialistReference = vi.fn(async () => temporaryReference);
+    mocks.createSession.mockRejectedValue(
+      new RuntimeSessionOwnershipConflictError({
+        continuationToken: "subagent:parent-session:call-reviewer",
+        ownerSessionId: "other-session",
+        sessionId: "loser-session",
+      }),
+    );
+    mocks.inspectSessionStart.mockResolvedValue(
+      createSpecialistOwnerSnapshot({
+        reference: { providerKind: "other-provider", value: "winner-reference" },
+      }),
+    );
+
+    const { result, session } = await runWithProvider({ createSpecialistReference });
+    const settledState = readResultSessionState(result, session);
+
+    expect(mocks.cancelSessionStart).toHaveBeenCalledExactlyOnceWith("loser-session");
+    expect(result.results[0]).toMatchObject({
+      isError: true,
+      output: { code: "SUBAGENT_START_CONFLICT" },
+    });
+    expect(getAgentHandleStore(settledState)).toEqual({ handles: [] });
+    expect(settledState?.[PENDING_HOST_RUNTIME_RELEASES_STATE_KEY]).toEqual([
+      expect.objectContaining({ outcome: "start_failed", reference: temporaryReference }),
+    ]);
+  });
+
+  it("fails closed when the existing specialist owner has another provider kind", async () => {
+    const createSpecialistReference = vi.fn(async () => specialistReference);
+    mocks.resolveContinuation.mockResolvedValue({ sessionId: "other-session" });
+    mocks.inspectSessionStart.mockResolvedValue(
+      createSpecialistOwnerSnapshot({
+        reference: { providerKind: "other-provider", value: "winner-reference" },
+      }),
+    );
+
+    const { result } = await runWithProvider({ createSpecialistReference });
+
+    expect(createSpecialistReference).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(result.results[0]).toMatchObject({
+      isError: true,
+      output: { code: "SUBAGENT_START_CONFLICT" },
+    });
+  });
+
   it("settles an eve-classified factory error without starting a child", async () => {
     const createSpecialistReference = vi.fn(async () => {
       throw new HostRuntimeError("HOST_RUNTIME_VERSION_UNAVAILABLE");
@@ -356,3 +477,49 @@ describe("dispatchRuntimeActionsStep specialist host runtime", () => {
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
 });
+
+function createSpecialistOwnerSnapshot(
+  input: {
+    readonly reference?: { readonly providerKind: string; readonly value: string };
+  } = {},
+) {
+  const reference = input.reference ?? specialistReference;
+  const parent = {
+    callId: "call-reviewer",
+    rootSessionId: "parent-session",
+    sessionId: "parent-session",
+    subagentName: "reviewer",
+    turnId: "turn-1",
+  } as const;
+  return {
+    attributes: {
+      "$eve.parent": "parent-session",
+      "$eve.parent_call": "call-reviewer",
+      "$eve.parent_turn": "turn-1",
+      "$eve.root": "parent-session",
+      "$eve.subagent": "subagents/reviewer",
+      "$eve.type": "subagent",
+    },
+    serializedContext: {
+      "eve.channel": {
+        kind: "subagent",
+        state: {
+          callId: "call-reviewer",
+          hostRuntime: { parent, reference },
+          parentContinuationToken: "turn-inbox",
+          parentSessionId: "parent-session",
+          subagentName: "reviewer",
+        },
+      },
+      "eve.continuationToken": "subagent:parent-session:call-reviewer",
+      "eve.hostRuntime": { ownership: "specialist", parent, reference },
+      "eve.parentSession": {
+        callId: "call-reviewer",
+        rootSessionId: "parent-session",
+        sessionId: "parent-session",
+        turn: { id: "turn-1", sequence: 1 },
+      },
+    },
+    status: "running",
+  } as const;
+}

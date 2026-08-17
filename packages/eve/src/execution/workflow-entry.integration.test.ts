@@ -14,6 +14,8 @@ import {
 } from "#execution/eve-workflow-attributes.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
+import { recoverLocalSubagentStartClaim } from "#execution/local-subagent-start-claim.js";
+import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
@@ -847,9 +849,98 @@ describe("workflowEntry integration", () => {
         expect(attrs["$eve.parent_turn"]).toBe("turn-parent");
         expect(attrs["$eve.root"]).toBe("root-session");
         expect(attrs["$eve.trigger"]).toBe("subagent");
+
+        const workflowRuntime = createWorkflowRuntime({
+          compiledArtifactsSource: createBundledRuntimeCompiledArtifactsSource(),
+        });
+        await expect(
+          recoverLocalSubagentStartClaim({
+            identity: {
+              callId: "call-subagent-1",
+              continuationToken: "subagent:parent-session:call-subagent-1",
+              nodeId: "researcher",
+              parentSessionId: "parent-session",
+              parentTurnId: "turn-parent",
+              rootSessionId: "root-session",
+              subagentName: "researcher",
+            },
+            ownerSessionId: run.runId,
+            runtime: workflowRuntime,
+          }),
+        ).resolves.toEqual({ sessionId: run.runId });
       } finally {
         stream.dispose();
         await run.cancel();
+      }
+    });
+  });
+
+  it("recovers the committed owner and cancels the replay loser", async () => {
+    const runtime = createTestRuntime({ agent: { name: "workflow-entry-subagent-replay" } });
+    const workflowRuntime = createWorkflowRuntime({
+      compiledArtifactsSource: createBundledRuntimeCompiledArtifactsSource(),
+    });
+    const continuationToken = "subagent:replay-parent:call-replay";
+    const runInput = {
+      adapter: {
+        kind: "subagent",
+        state: {
+          callId: "call-replay",
+          parentContinuationToken: "parent-reply-hook",
+          parentSessionId: "replay-parent",
+          subagentName: "agent",
+        },
+      },
+      auth: null,
+      continuationToken,
+      input: { message: "committed child whose start response is discarded" },
+      mode: "task",
+      parent: {
+        callId: "call-replay",
+        rootSessionId: "replay-root",
+        sessionId: "replay-parent",
+        turn: { id: "replay-turn", sequence: 1 },
+      },
+    } as const;
+
+    await runtime.run(async () => {
+      const committed = await workflowRuntime.createSession(runInput);
+      let loserSessionId: string | undefined;
+
+      try {
+        await workflowRuntime.createSession(runInput);
+        throw new Error("Expected the replayed start to lose the continuation claim.");
+      } catch (error) {
+        expect(isRuntimeSessionOwnershipConflictError(error)).toBe(true);
+        if (!isRuntimeSessionOwnershipConflictError(error)) throw error;
+
+        expect(error.ownerSessionId).toBe(committed.sessionId);
+        loserSessionId = error.sessionId;
+        await expect(
+          recoverLocalSubagentStartClaim({
+            identity: {
+              callId: "call-replay",
+              continuationToken,
+              nodeId: ROOT_COMPILED_AGENT_NODE_ID,
+              parentSessionId: "replay-parent",
+              parentTurnId: "replay-turn",
+              rootSessionId: "replay-root",
+              subagentName: "agent",
+            },
+            ownerSessionId: error.ownerSessionId,
+            runtime: workflowRuntime,
+          }),
+        ).resolves.toEqual({ sessionId: committed.sessionId });
+        expect(["cancelled", "terminal"]).toContain(
+          await workflowRuntime.cancelSessionStart(error.sessionId),
+        );
+      } finally {
+        if (loserSessionId !== undefined) {
+          const loser = await (await getWorld()).runs.get(loserSessionId);
+          expect(loser.status).not.toBe("pending");
+          expect(loser.status).not.toBe("running");
+        }
+        await workflowRuntime.cancelSessionStart(committed.sessionId);
       }
     });
   });

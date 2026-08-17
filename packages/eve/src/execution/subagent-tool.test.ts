@@ -4,6 +4,7 @@ import { SUBAGENT_ADAPTER_KIND } from "#execution/subagent-adapter-state.js";
 import type { HarnessSession } from "#harness/types.js";
 import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
 import {
+  buildLocalSubagentStartIdentity,
   buildSubagentRunInput,
   resolveSubagentDelegationMessage,
 } from "#execution/subagent-tool.js";
@@ -37,9 +38,13 @@ function makeAction(): RuntimeSubagentCallActionRequest {
 }
 
 function buildRuntimeSubagentRunInput(
-  input: Omit<BuildSubagentRunInput, "source">,
+  input: Omit<BuildSubagentRunInput, "source" | "startIdentity">,
 ): ReturnType<typeof buildSubagentRunInput> {
-  return buildSubagentRunInput({ ...input, source: { type: "runtime" } });
+  return buildSubagentRunInput({
+    ...input,
+    source: { type: "runtime" },
+    startIdentity: buildLocalSubagentStartIdentity(input),
+  });
 }
 
 describe("buildSubagentRunInput", () => {
@@ -245,6 +250,11 @@ describe("buildSubagentRunInput", () => {
       initiatorAuth: null,
       session: makeSession(),
       source: { description: "Local delegate subagent description.", type: "local" },
+      startIdentity: buildLocalSubagentStartIdentity({
+        action: makeAction(),
+        batchEvent: { sequence: 0, turnId: "turn-0" },
+        session: makeSession(),
+      }),
     });
 
     expect(runInput.input.message).toBe(

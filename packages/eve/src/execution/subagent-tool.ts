@@ -29,6 +29,17 @@ interface BatchEventMetadata {
   readonly turnId: string;
 }
 
+/** Durable coordinates that identify one logical local subagent start. */
+export interface LocalSubagentStartIdentity {
+  readonly callId: string;
+  readonly continuationToken: string;
+  readonly nodeId: string;
+  readonly parentSessionId: string;
+  readonly parentTurnId: string;
+  readonly rootSessionId: string;
+  readonly subagentName: string;
+}
+
 export type SubagentInputSource =
   | {
       readonly description: string;
@@ -48,6 +59,25 @@ export type SubagentInputSource =
 export interface SubagentRunInputBuild {
   readonly childContinuationToken: string;
   readonly runInput: RunInput;
+}
+
+/** Derives the single identity shared by local child creation and replay recovery. */
+export function buildLocalSubagentStartIdentity(input: {
+  readonly action: RuntimeSubagentCallActionRequest;
+  readonly batchEvent: BatchEventMetadata;
+  readonly session: HarnessSession;
+}): LocalSubagentStartIdentity {
+  return {
+    callId: input.action.callId,
+    continuationToken: mintSubagentContinuationToken(
+      `${input.session.sessionId}:${input.action.callId}`,
+    ),
+    nodeId: input.action.nodeId,
+    parentSessionId: input.session.sessionId,
+    parentTurnId: input.batchEvent.turnId,
+    rootSessionId: input.session.rootSessionId ?? input.session.sessionId,
+    subagentName: input.action.subagentName,
+  };
 }
 
 /** Reads the exact delegation message submitted through an agent action. */
@@ -84,6 +114,7 @@ export function buildSubagentRunInput(input: {
    */
   readonly fanoutSize?: number;
   readonly initiatorAuth: SessionAuthContext | null;
+  readonly startIdentity: LocalSubagentStartIdentity;
   readonly hostRuntime?: DurableHostRuntimeContext;
   /** Exact message already validated before the dispatch batch starts. */
   readonly delegationMessage?: string;
@@ -114,9 +145,7 @@ export function buildSubagentRunInput(input: {
   const delegationMessage =
     input.delegationMessage ?? resolveSubagentDelegationMessage(input.action);
 
-  const childContinuationToken = mintSubagentContinuationToken(
-    `${session.sessionId}:${action.callId}`,
-  );
+  const childContinuationToken = input.startIdentity.continuationToken;
 
   // Denormalize the chain root onto the child's `parent` metadata so
   // every descendant in a nested dispatch can attribute itself to the
@@ -125,7 +154,7 @@ export function buildSubagentRunInput(input: {
   // `session.rootSessionId` here; a top-level session carries no
   // explicit root, so its own `sessionId` becomes the root for its
   // children.
-  const rootSessionId = session.rootSessionId ?? session.sessionId;
+  const rootSessionId = input.startIdentity.rootSessionId;
   const subagentDepth = resolveSubagentDepth(session);
   const inheritedLimits: {
     -readonly [K in keyof RunSessionLimits]: RunSessionLimits[K];
@@ -138,10 +167,10 @@ export function buildSubagentRunInput(input: {
     adapter: {
       kind: SUBAGENT_ADAPTER_KIND,
       state: {
-        callId: action.callId,
+        callId: input.startIdentity.callId,
         parentContinuationToken: input.parentContinuationToken ?? session.continuationToken,
-        parentSessionId: session.sessionId,
-        subagentName: action.subagentName,
+        parentSessionId: input.startIdentity.parentSessionId,
+        subagentName: input.startIdentity.subagentName,
         ...(input.hostRuntime?.ownership === "specialist" && input.hostRuntime.parent !== undefined
           ? {
               hostRuntime: {
@@ -172,11 +201,11 @@ export function buildSubagentRunInput(input: {
     limits: inheritedLimits,
     mode: input.persistentSessions === true ? "conversation" : "task",
     parent: {
-      callId: action.callId,
+      callId: input.startIdentity.callId,
       rootSessionId,
-      sessionId: session.sessionId,
+      sessionId: input.startIdentity.parentSessionId,
       turn: {
-        id: batchEvent.turnId,
+        id: input.startIdentity.parentTurnId,
         sequence: batchEvent.sequence,
       },
     },

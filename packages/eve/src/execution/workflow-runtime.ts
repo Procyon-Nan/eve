@@ -20,12 +20,16 @@ import type {
 } from "#channel/types.js";
 import { serializeContext } from "#context/serialize.js";
 import {
+  deriveRunPayloadKeys,
+  hydrateWorkflowArguments,
+} from "#compiled/@workflow/core/serialization.js";
+import {
   buildSessionAttributes,
   buildSubagentRootAttributes,
   readParentLineage,
 } from "#execution/eve-workflow-attributes.js";
 import { createLogger, logError } from "#internal/logging.js";
-import { getHookByToken, getRun, resumeHook } from "#internal/workflow/runtime.js";
+import { getHookByToken, getRun, getWorld, resumeHook } from "#internal/workflow/runtime.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
@@ -62,6 +66,27 @@ interface WorkflowHookRecord {
   readonly runId: string;
 }
 
+export interface WorkflowSessionStartSnapshot {
+  readonly attributes: Readonly<Record<string, string>>;
+  readonly serializedContext: Record<string, unknown>;
+  readonly status: "pending" | "running" | "completed" | "failed" | "cancelled";
+}
+
+export class WorkflowSessionStartInvalidError extends Error {
+  readonly sessionId: string;
+
+  constructor(sessionId: string, cause?: unknown) {
+    super(`Workflow session "${sessionId}" has invalid start metadata.`, { cause });
+    this.name = "WorkflowSessionStartInvalidError";
+    this.sessionId = sessionId;
+  }
+}
+
+export interface WorkflowRuntime extends Runtime {
+  cancelSessionStart(sessionId: string): Promise<"cancelled" | "not_found" | "terminal">;
+  inspectSessionStart(sessionId: string): Promise<WorkflowSessionStartSnapshot>;
+}
+
 /**
  * Creates a workflow-backed runtime whose long-lived driver owns the
  * event stream and dispatches each turn as a child workflow run.
@@ -70,8 +95,37 @@ export function createWorkflowRuntime(config: {
   readonly compiledArtifactsSource: RuntimeCompiledArtifactsSource;
   readonly dynamicSubagentAgentConfig?: DynamicSubagentAgentConfig;
   readonly nodeId?: string;
-}): Runtime {
+}): WorkflowRuntime {
   return {
+    async cancelSessionStart(sessionId: string) {
+      const run = getRun(sessionId);
+      let status: Awaited<typeof run.status>;
+      try {
+        status = await run.status;
+      } catch (error) {
+        if (WorkflowRunNotFoundError.is(error)) return "not_found";
+        throw error;
+      }
+      if (status !== "pending" && status !== "running") return "terminal";
+
+      try {
+        await run.cancel({ cancelReason: "Duplicate local subagent start claim." });
+      } catch (error) {
+        if (!isInactiveCommandTarget(error)) throw error;
+      }
+
+      try {
+        const finalStatus = await run.status;
+        if (finalStatus === "pending" || finalStatus === "running") {
+          throw new Error(`Workflow session "${sessionId}" remained active after cancellation.`);
+        }
+        return finalStatus === "cancelled" ? "cancelled" : "terminal";
+      } catch (error) {
+        if (WorkflowRunNotFoundError.is(error)) return "not_found";
+        throw error;
+      }
+    },
+
     async createSession(input: RunInput): Promise<RunHandle> {
       const bundle = await getCompiledRuntimeAgentBundle({
         compiledArtifactsSource: config.compiledArtifactsSource,
@@ -182,6 +236,33 @@ export function createWorkflowRuntime(config: {
       }
     },
 
+    async inspectSessionStart(sessionId: string): Promise<WorkflowSessionStartSnapshot> {
+      const world = await getWorld();
+      let run: Awaited<ReturnType<typeof world.runs.get>>;
+      try {
+        run = await world.runs.get(sessionId);
+      } catch (error) {
+        if (WorkflowRunNotFoundError.is(error)) {
+          throw new WorkflowSessionStartInvalidError(sessionId, error);
+        }
+        throw error;
+      }
+      const rawKey = await world.getEncryptionKeyForRun?.(run);
+      const key = rawKey === undefined ? undefined : await deriveRunPayloadKeys(rawKey);
+      let args: unknown;
+      try {
+        args = await hydrateWorkflowArguments(run.input, sessionId, key);
+      } catch (error) {
+        throw new WorkflowSessionStartInvalidError(sessionId, error);
+      }
+      const workflowInput = readWorkflowEntryInput(args, sessionId);
+      return {
+        attributes: run.attributes,
+        serializedContext: workflowInput.serializedContext,
+        status: run.status,
+      };
+    },
+
     async resolveContinuation(
       continuationToken: string,
     ): Promise<{ sessionId: string } | undefined> {
@@ -199,6 +280,24 @@ export function createWorkflowRuntime(config: {
       }
     },
   };
+}
+
+function readWorkflowEntryInput(value: unknown, sessionId: string): WorkflowEntryInput {
+  if (!Array.isArray(value) || value.length !== 1) {
+    throw new WorkflowSessionStartInvalidError(sessionId);
+  }
+  const input = value[0];
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    !("serializedContext" in input) ||
+    (input as { readonly serializedContext?: unknown }).serializedContext === null ||
+    typeof (input as { readonly serializedContext?: unknown }).serializedContext !== "object" ||
+    Array.isArray((input as { readonly serializedContext?: unknown }).serializedContext)
+  ) {
+    throw new WorkflowSessionStartInvalidError(sessionId);
+  }
+  return input as WorkflowEntryInput;
 }
 
 async function dispatchWorkflowCommand<TCommand extends SessionCommand>(

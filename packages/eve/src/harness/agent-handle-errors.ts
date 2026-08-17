@@ -18,6 +18,9 @@ export const AGENT_BUSY = "AGENT_BUSY";
 /** Error code for a local subagent that failed to start. */
 export const SUBAGENT_START_FAILED = "SUBAGENT_START_FAILED";
 
+/** Error code for a local subagent claim that belongs to another logical start. */
+export const SUBAGENT_START_CONFLICT = "SUBAGENT_START_CONFLICT";
+
 /** Error code for a delegated subagent whose execution threw. */
 export const SUBAGENT_EXECUTION_FAILED = "SUBAGENT_EXECUTION_FAILED";
 

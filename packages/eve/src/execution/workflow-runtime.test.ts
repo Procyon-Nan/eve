@@ -8,6 +8,7 @@ import {
   LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
   sessionTimeoutWorkflowReference,
   turnWorkflowReference,
+  WorkflowSessionStartInvalidError,
   workflowEntryReference,
 } from "#execution/workflow-runtime.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
@@ -20,6 +21,8 @@ const getWorldMock = vi.fn();
 const resumeHookMock = vi.fn();
 const cancelRunMock = vi.fn();
 const startMock = vi.fn();
+const deriveRunPayloadKeysMock = vi.fn();
+const hydrateWorkflowArgumentsMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   cancelRun: (...args: unknown[]) => cancelRunMock(...args),
@@ -28,6 +31,11 @@ vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   getWorld: (...args: unknown[]) => getWorldMock(...args),
   resumeHook: (...args: unknown[]) => resumeHookMock(...args),
   start: (...args: unknown[]) => startMock(...args),
+}));
+
+vi.mock("#compiled/@workflow/core/serialization.js", () => ({
+  deriveRunPayloadKeys: (...args: unknown[]) => deriveRunPayloadKeysMock(...args),
+  hydrateWorkflowArguments: (...args: unknown[]) => hydrateWorkflowArgumentsMock(...args),
 }));
 
 vi.mock("#runtime/sessions/compiled-agent-cache.js", () => ({
@@ -41,6 +49,8 @@ afterEach(() => {
   resumeHookMock.mockReset();
   cancelRunMock.mockReset();
   startMock.mockReset();
+  deriveRunPayloadKeysMock.mockReset();
+  hydrateWorkflowArgumentsMock.mockReset();
   vi.mocked(getCompiledRuntimeAgentBundle).mockReset();
   vi.unstubAllEnvs();
 });
@@ -269,6 +279,107 @@ describe("createWorkflowRuntime#resolveContinuation", () => {
     getHookByTokenMock.mockRejectedValue(failure);
 
     await expect(buildRuntime().resolveContinuation("test:token")).rejects.toBe(failure);
+  });
+});
+
+describe("createWorkflowRuntime start inspection and cleanup", () => {
+  function buildRuntime() {
+    return createWorkflowRuntime({ compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource });
+  }
+
+  it("hydrates the durable workflow-entry input without exposing it on Runtime", async () => {
+    const serializedContext = { "eve.continuationToken": "subagent:parent:call-1" };
+    const run = {
+      attributes: { "$eve.type": "subagent" },
+      input: new Uint8Array([1, 2, 3]),
+      status: "running",
+    };
+    getWorldMock.mockResolvedValue({
+      getEncryptionKeyForRun: vi.fn(async () => undefined),
+      runs: { get: vi.fn(async () => run) },
+    });
+    hydrateWorkflowArgumentsMock.mockResolvedValue([{ input: {}, serializedContext }]);
+
+    await expect(buildRuntime().inspectSessionStart("owner-session")).resolves.toEqual({
+      attributes: run.attributes,
+      serializedContext,
+      status: "running",
+    });
+    expect(hydrateWorkflowArgumentsMock).toHaveBeenCalledWith(
+      run.input,
+      "owner-session",
+      undefined,
+    );
+  });
+
+  it("derives the owning run's payload keys before hydrating encrypted input", async () => {
+    const rawKey = new Uint8Array([7, 8, 9]);
+    const payloadKeys = { kind: "payload-keys" };
+    const run = { attributes: {}, input: new Uint8Array([1]), status: "running" };
+    getWorldMock.mockResolvedValue({
+      getEncryptionKeyForRun: vi.fn(async () => rawKey),
+      runs: { get: vi.fn(async () => run) },
+    });
+    deriveRunPayloadKeysMock.mockResolvedValue(payloadKeys);
+    hydrateWorkflowArgumentsMock.mockResolvedValue([{ input: {}, serializedContext: {} }]);
+
+    await buildRuntime().inspectSessionStart("owner-session");
+
+    expect(deriveRunPayloadKeysMock).toHaveBeenCalledWith(rawKey);
+    expect(hydrateWorkflowArgumentsMock).toHaveBeenCalledWith(
+      run.input,
+      "owner-session",
+      payloadKeys,
+    );
+  });
+
+  it("classifies malformed durable workflow input without masking store failures", async () => {
+    const run = { attributes: {}, input: new Uint8Array([1]), status: "running" };
+    getWorldMock.mockResolvedValue({
+      getEncryptionKeyForRun: vi.fn(async () => undefined),
+      runs: { get: vi.fn(async () => run) },
+    });
+    hydrateWorkflowArgumentsMock.mockRejectedValue(new Error("malformed payload"));
+
+    await expect(buildRuntime().inspectSessionStart("owner-session")).rejects.toBeInstanceOf(
+      WorkflowSessionStartInvalidError,
+    );
+
+    const storeError = new Error("workflow store unavailable");
+    getWorldMock.mockResolvedValue({
+      runs: {
+        get: vi.fn(async () => {
+          throw storeError;
+        }),
+      },
+    });
+    await expect(buildRuntime().inspectSessionStart("owner-session")).rejects.toBe(storeError);
+  });
+
+  it("cancels an active losing session and confirms it is terminal", async () => {
+    let status = "running";
+    const cancel = vi.fn(async () => {
+      status = "cancelled";
+    });
+    getRunMock.mockReturnValue({
+      cancel,
+      get status() {
+        return Promise.resolve(status);
+      },
+    });
+
+    await expect(buildRuntime().cancelSessionStart("loser-session")).resolves.toBe("cancelled");
+    expect(cancel).toHaveBeenCalledWith({
+      cancelReason: "Duplicate local subagent start claim.",
+    });
+  });
+
+  it("does not cancel a session that is already terminal", async () => {
+    const cancel = vi.fn();
+    getRunMock.mockReturnValue({ cancel, status: Promise.resolve("completed") });
+
+    await expect(buildRuntime().cancelSessionStart("completed-session")).resolves.toBe("terminal");
+    expect(cancel).not.toHaveBeenCalled();
   });
 });
 

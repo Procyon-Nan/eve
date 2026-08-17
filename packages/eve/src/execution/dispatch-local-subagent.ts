@@ -1,6 +1,6 @@
 import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import type { DispatchOutcome, RuntimeSession } from "#execution/agent-handle-dispatch.js";
-import { SUBAGENT_START_FAILED } from "#harness/agent-handle-errors.js";
+import { SUBAGENT_START_CONFLICT, SUBAGENT_START_FAILED } from "#harness/agent-handle-errors.js";
 import {
   confirmAgentStarted,
   prepareAgentStart,
@@ -8,30 +8,29 @@ import {
 } from "#harness/handles/transitions.js";
 import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
 import { mintStartOperation } from "#execution/dispatch-start-operation.js";
-import { buildSubagentRunInput, type SubagentInputSource } from "#execution/subagent-tool.js";
+import {
+  buildLocalSubagentStartIdentity,
+  buildSubagentRunInput,
+  type SubagentInputSource,
+} from "#execution/subagent-tool.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { createErrorId, createLogger, logError } from "#internal/logging.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { getDynamicSubagentSelection } from "#context/dynamic-subagent-lifecycle.js";
 import { releaseHostRuntimeReference } from "#runtime/host-runtime/preflight.js";
-import { getActiveRuntimeSession } from "#runtime/sessions/runtime-session.js";
-import {
-  HostRuntimeError,
-  isHostRuntimeError,
-  sanitizeHostRuntimeProviderFailure,
-} from "#runtime/host-runtime/errors.js";
-import { validateHostRuntimeReference } from "#runtime/host-runtime/validation.js";
-import type { DurableHostRuntimeContext, HostRuntimeParentLineage } from "#shared/host-runtime.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 import { enqueueHostRuntimeRelease } from "#harness/host-runtime-releases.js";
+import {
+  LocalSubagentStartClaimConflictError,
+  recoverLocalSubagentStartClaim,
+  resolveLocalSubagentStartClaim,
+  type RecoveredLocalSubagentStart,
+} from "#execution/local-subagent-start-claim.js";
+import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
+import { prepareLocalSubagentHostRuntime } from "#execution/local-subagent-host-runtime.js";
+import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 
 const log = createLogger("execution.dispatch-runtime-actions");
-
-export type DynamicSubagentAgentConfig = NonNullable<
-  Extract<
-    ReturnType<typeof getDynamicSubagentSelection>,
-    { readonly kind: "subagent" }
-  >["agentConfig"]
->;
 
 export async function startLocalSubagent(input: {
   readonly action: RuntimeSubagentCallActionRequest;
@@ -54,11 +53,72 @@ export async function startLocalSubagent(input: {
   readonly source: SubagentInputSource;
 }): Promise<DispatchOutcome> {
   const { action, source } = input;
+  const startIdentity = buildLocalSubagentStartIdentity({
+    action,
+    batchEvent: input.batchEvent,
+    session: input.session,
+  });
   let dynamicSubagentAgentConfig = input.dynamicSubagentAgentConfig;
+  const specialistProviderKind = dynamicSubagentAgentConfig?.runtime?.providerKind;
+  let childRuntime = createWorkflowRuntime({
+    compiledArtifactsSource: input.bundle.compiledArtifactsSource,
+    dynamicSubagentAgentConfig,
+    nodeId: action.nodeId,
+  });
+  const targetKind = source.type === "runtime" ? ("agent/self" as const) : ("agent/local" as const);
+  const { identity, operation } = mintStartOperation({
+    callId: startIdentity.callId,
+    name: startIdentity.subagentName,
+    nodeId: startIdentity.nodeId,
+    parentSessionId: startIdentity.parentSessionId,
+    parentTurnId: startIdentity.parentTurnId,
+  });
+
+  let existing: RecoveredLocalSubagentStart | undefined;
+  try {
+    existing = await resolveLocalSubagentStartClaim({
+      identity: startIdentity,
+      runtime: childRuntime,
+      specialistProviderKind,
+    });
+  } catch (error) {
+    if (!(error instanceof LocalSubagentStartClaimConflictError)) throw error;
+    log.warn("local subagent start claim conflicted", {
+      callId: action.callId,
+      errorId: createErrorId(),
+      ownerSessionId: error.ownerSessionId,
+      parentSessionId: input.session.sessionId,
+      parentTurnId: input.batchEvent.turnId,
+      subagentName: action.subagentName,
+    });
+    return createStartConflictOutcome({ action, session: input.currentSession });
+  }
+  if (existing !== undefined) {
+    const address = {
+      continuationToken: startIdentity.continuationToken,
+      kind: targetKind,
+      sessionId: existing.sessionId,
+    } as const;
+    const preparedSession = prepareAgentStart(input.currentSession, {
+      identity,
+      operation,
+      target: { continuationToken: startIdentity.continuationToken, kind: targetKind },
+      ...(existing.specialistHostRuntime === undefined
+        ? {}
+        : { hostRuntime: existing.specialistHostRuntime }),
+    });
+    return createCalledOutcome({
+      action,
+      address,
+      delegationMessage: input.delegationMessage,
+      operationId: operation.id,
+      preparedSession,
+    });
+  }
+
   let specialistHostRuntime: DurableHostRuntimeContext | undefined;
   try {
-    const prepared = await prepareSpecialistHostRuntime({
-      action,
+    const prepared = await prepareLocalSubagentHostRuntime({
       auth: input.auth,
       authorizedSpecialistNames: input.authorizedSpecialistNames,
       config: dynamicSubagentAgentConfig,
@@ -66,7 +126,7 @@ export async function startLocalSubagent(input: {
       parentHostRuntime: input.parentHostRuntime,
       persistentSessions: input.persistentSessions,
       session: input.session,
-      turnId: input.batchEvent.turnId,
+      startIdentity,
     });
     dynamicSubagentAgentConfig = prepared.config;
     specialistHostRuntime = prepared.hostRuntime;
@@ -85,7 +145,7 @@ export async function startLocalSubagent(input: {
       session: input.currentSession,
     };
   }
-  const childRuntime = createWorkflowRuntime({
+  childRuntime = createWorkflowRuntime({
     compiledArtifactsSource: input.bundle.compiledArtifactsSource,
     dynamicSubagentAgentConfig,
     nodeId: action.nodeId,
@@ -96,11 +156,11 @@ export async function startLocalSubagent(input: {
       ? {
           ownership: "inherited" as const,
           parent: {
-            callId: action.callId,
-            rootSessionId: input.session.rootSessionId ?? input.session.sessionId,
-            sessionId: input.session.sessionId,
-            subagentName: action.subagentName,
-            turnId: input.batchEvent.turnId,
+            callId: startIdentity.callId,
+            rootSessionId: startIdentity.rootSessionId,
+            sessionId: startIdentity.parentSessionId,
+            subagentName: startIdentity.subagentName,
+            turnId: startIdentity.parentTurnId,
           },
           reference: input.parentHostRuntime.reference,
         }
@@ -120,16 +180,9 @@ export async function startLocalSubagent(input: {
     persistentSessions: input.persistentSessions,
     session: input.session,
     source,
+    startIdentity,
   });
 
-  const targetKind = source.type === "runtime" ? ("agent/self" as const) : ("agent/local" as const);
-  const { identity, operation } = mintStartOperation({
-    callId: action.callId,
-    name: action.subagentName,
-    nodeId: action.nodeId,
-    parentSessionId: input.session.sessionId,
-    parentTurnId: input.batchEvent.turnId,
-  });
   // Ownership is recorded before the start side effect, and the prepared
   // (or rejected) store rides every outcome into the step result. The
   // guarantee is intra-step: a crash between the accepted start and the
@@ -141,14 +194,6 @@ export async function startLocalSubagent(input: {
       identity,
       operation,
       target: { continuationToken: childContinuationToken, kind: targetKind },
-      ...(specialistHostRuntime?.parent === undefined
-        ? {}
-        : {
-            hostRuntime: {
-              parent: specialistHostRuntime.parent,
-              reference: specialistHostRuntime.reference,
-            },
-          }),
     });
   } catch (error) {
     if (specialistHostRuntime?.parent !== undefined) {
@@ -167,6 +212,69 @@ export async function startLocalSubagent(input: {
     const handle = await childRuntime.createSession(runInput);
     childSessionId = handle.sessionId;
   } catch (error) {
+    if (isRuntimeSessionOwnershipConflictError(error)) {
+      let recovered: RecoveredLocalSubagentStart;
+      try {
+        if (error.continuationToken !== startIdentity.continuationToken) {
+          throw new LocalSubagentStartClaimConflictError(error.ownerSessionId);
+        }
+        recovered = await recoverLocalSubagentStartClaim({
+          identity: startIdentity,
+          ownerSessionId: error.ownerSessionId,
+          runtime: childRuntime,
+          specialistProviderKind,
+        });
+      } catch (claimError) {
+        if (!(claimError instanceof LocalSubagentStartClaimConflictError)) throw claimError;
+        await childRuntime.cancelSessionStart(error.sessionId);
+        let rejectedSession = rejectAgentEffect(preparedSession, {
+          disposition: "dead",
+          operationId: operation.id,
+        });
+        if (specialistHostRuntime?.parent !== undefined) {
+          rejectedSession = enqueueHostRuntimeRelease(rejectedSession, {
+            outcome: "start_failed",
+            parent: specialistHostRuntime.parent,
+            reference: specialistHostRuntime.reference,
+            sessionId: input.session.sessionId,
+          });
+        }
+        log.warn("local subagent ownership conflict was not recoverable", {
+          callId: action.callId,
+          errorId: createErrorId(),
+          losingSessionId: error.sessionId,
+          ownerSessionId: error.ownerSessionId,
+          parentSessionId: input.session.sessionId,
+          parentTurnId: input.batchEvent.turnId,
+          subagentName: action.subagentName,
+        });
+        return createStartConflictOutcome({ action, session: rejectedSession });
+      }
+
+      await childRuntime.cancelSessionStart(error.sessionId);
+      if (specialistHostRuntime?.parent !== undefined) {
+        preparedSession = enqueueHostRuntimeRelease(preparedSession, {
+          outcome: "start_failed",
+          parent: specialistHostRuntime.parent,
+          reference: specialistHostRuntime.reference,
+          sessionId: input.session.sessionId,
+        });
+      }
+      const address = {
+        continuationToken: startIdentity.continuationToken,
+        kind: targetKind,
+        sessionId: recovered.sessionId,
+      } as const;
+      return createCalledOutcome({
+        action,
+        address,
+        delegationMessage: input.delegationMessage,
+        hostRuntime: recovered.specialistHostRuntime,
+        operationId: operation.id,
+        preparedSession,
+      });
+    }
+
     logError(log, "local subagent start failed", error, {
       callId: action.callId,
       nodeId: action.nodeId,
@@ -206,113 +314,59 @@ export async function startLocalSubagent(input: {
     kind: targetKind,
     sessionId: childSessionId,
   } as const;
-  return {
+  return createCalledOutcome({
+    action,
     address,
-    callId: action.callId,
+    delegationMessage: input.delegationMessage,
+    hostRuntime:
+      specialistHostRuntime?.parent === undefined
+        ? undefined
+        : {
+            parent: specialistHostRuntime.parent,
+            reference: specialistHostRuntime.reference,
+          },
+    operationId: operation.id,
+    preparedSession,
+  });
+}
+
+function createCalledOutcome(input: {
+  readonly action: RuntimeSubagentCallActionRequest;
+  readonly address: Extract<DispatchOutcome, { readonly kind: "called" }>["address"];
+  readonly delegationMessage: string;
+  readonly hostRuntime?: RecoveredLocalSubagentStart["specialistHostRuntime"];
+  readonly operationId: string;
+  readonly preparedSession: RuntimeSession;
+}): DispatchOutcome {
+  return {
+    address: input.address,
+    callId: input.action.callId,
     kind: "called",
     message: input.delegationMessage,
-    name: action.name,
-    session: confirmAgentStarted(preparedSession, {
-      address,
-      operationId: operation.id,
+    name: input.action.name,
+    session: confirmAgentStarted(input.preparedSession, {
+      address: input.address,
+      hostRuntime: input.hostRuntime,
+      operationId: input.operationId,
     }),
-    toolName: action.subagentName,
+    toolName: input.action.subagentName,
   };
 }
 
-async function prepareSpecialistHostRuntime(input: {
+function createStartConflictOutcome(input: {
   readonly action: RuntimeSubagentCallActionRequest;
-  readonly auth: Parameters<typeof buildSubagentRunInput>[0]["auth"];
-  readonly authorizedSpecialistNames: ReadonlySet<string>;
-  readonly config: DynamicSubagentAgentConfig | undefined;
-  readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
-  readonly parentHostRuntime: DurableHostRuntimeContext | undefined;
-  readonly persistentSessions: boolean;
   readonly session: RuntimeSession;
-  readonly turnId: string;
-}): Promise<{
-  readonly config: DynamicSubagentAgentConfig | undefined;
-  readonly hostRuntime: DurableHostRuntimeContext | undefined;
-}> {
-  if (input.config?.runtime === undefined) {
-    return { config: input.config, hostRuntime: undefined };
-  }
-  if (input.persistentSessions) {
-    throw new HostRuntimeError("HOST_RUNTIME_RESOLUTION_FAILED");
-  }
-  const parent = input.parentHostRuntime;
-  if (
-    parent === undefined ||
-    parent.ownership !== "root" ||
-    !input.authorizedSpecialistNames.has(input.action.subagentName)
-  ) {
-    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
-  }
-  const provider = getActiveRuntimeSession().hostRuntimeProviders.get(
-    parent.reference.providerKind,
-  );
-  if (provider === undefined) {
-    throw new HostRuntimeError("HOST_RUNTIME_PROVIDER_NOT_REGISTERED");
-  }
-  if (provider.createSpecialistReference === undefined) {
-    throw new HostRuntimeError("HOST_RUNTIME_RESOLUTION_FAILED");
-  }
-  const lineage: HostRuntimeParentLineage = {
-    callId: input.action.callId,
-    rootSessionId: input.session.rootSessionId ?? input.session.sessionId,
-    sessionId: input.session.sessionId,
-    subagentName: input.action.subagentName,
-    turnId: input.turnId,
-  };
-
-  let createdReference: unknown;
-  try {
-    createdReference = await provider.createSpecialistReference({
-      auth: input.auth,
-      callId: input.action.callId,
-      initiatorAuth: input.initiatorAuth,
-      parentReference: parent.reference,
-      parentSessionId: input.session.sessionId,
-      parentTurnId: input.turnId,
-      subagentName: input.action.subagentName,
-    });
-  } catch (error) {
-    throw sanitizeHostRuntimeProviderFailure(error);
-  }
-  const reference = validateHostRuntimeReference(createdReference);
-  if (
-    reference.providerKind !== input.config.runtime.providerKind ||
-    !getActiveRuntimeSession().hostRuntimeProviders.has(reference.providerKind)
-  ) {
-    if (provider.release !== undefined) {
-      try {
-        await provider.release({
-          outcome: "start_failed",
-          parent: lineage,
-          reference,
-          sessionId: input.session.sessionId,
-        });
-      } catch {
-        log.warn("host runtime release callback failed", {
-          callId: input.action.callId,
-          errorId: createErrorId(),
-          providerKind: parent.reference.providerKind,
-          subagentName: input.action.subagentName,
-        });
-      }
-    }
-    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
-  }
-  const hostRuntime: DurableHostRuntimeContext = {
-    ownership: "specialist",
-    parent: lineage,
-    reference,
-  };
+}): DispatchOutcome {
   return {
-    config: {
-      ...input.config,
-      runtime: { ...input.config.runtime, parent: lineage, reference },
+    kind: "error",
+    result: {
+      callId: input.action.callId,
+      isError: true,
+      kind: "subagent-result",
+      origin: "dispatch",
+      output: { code: SUBAGENT_START_CONFLICT, message: SUBAGENT_START_CONFLICT },
+      subagentName: input.action.subagentName,
     },
-    hostRuntime,
+    session: input.session,
   };
 }

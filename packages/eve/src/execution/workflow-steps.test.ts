@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { HookNotFoundError } from "#compiled/@workflow/errors/index.js";
 
 import type { ChannelAdapter, ChannelAdapterContext } from "#channel/adapter.js";
 import type { DeliverPayload, SubagentInputRequestHookPayload } from "#channel/types.js";
@@ -99,6 +100,9 @@ function createStubSessionState(overrides: Partial<DurableSessionState> = {}): D
 
 const DEFAULT_WORKFLOW_STREAM_NAMESPACE = "__default__";
 const getRunMock = vi.fn();
+const getHookByTokenMock = vi.fn<(token: string) => Promise<{ runId: string }>>(async () => ({
+  runId: "child-run",
+}));
 const resumeHookMock = vi.fn();
 const startMock = vi.fn();
 const workflowWritesByNamespace = new Map<string, unknown[]>();
@@ -129,7 +133,7 @@ vi.mock("../runtime/sessions/compiled-agent-cache.js", () => ({
 }));
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
-  getHookByToken: vi.fn(async () => ({ runId: "child-run" })),
+  getHookByToken: (token: string) => getHookByTokenMock(token),
   getRun: (...args: unknown[]) => getRunMock(...args),
   resumeHook: (...args: unknown[]) => resumeHookMock(...args),
   start: (...args: unknown[]) => startMock(...args),
@@ -199,6 +203,7 @@ function createSerializedContext(): Record<string, unknown> {
 }
 
 afterEach(() => {
+  getHookByTokenMock.mockReset().mockResolvedValue({ runId: "child-run" });
   getRunMock.mockReset();
   resumeHookMock.mockReset();
   startMock.mockReset();
@@ -456,6 +461,16 @@ describe("dispatchRuntimeActionsStep", () => {
     startMock
       .mockResolvedValueOnce({ runId: "child-run" })
       .mockRejectedValueOnce(new Error("child start failed"));
+    getHookByTokenMock.mockImplementation(async (token: unknown) => {
+      if (
+        typeof token === "string" &&
+        (token.startsWith("eve:session:") ||
+          (token.endsWith(":call-1") && startMock.mock.calls.length > 0))
+      ) {
+        return { runId: "child-run" };
+      }
+      throw new HookNotFoundError(String(token));
+    });
     getRunMock.mockReturnValue({
       getReadable: () =>
         new ReadableStream<Uint8Array>({

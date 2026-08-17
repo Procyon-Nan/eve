@@ -149,6 +149,7 @@ export function confirmAgentStarted(
   input: {
     readonly operationId: string;
     readonly address: AgentAddress;
+    readonly hostRuntime?: AgentHandleHostRuntime;
   },
 ): HarnessSession {
   const handles = getAgentHandleStore(session.state)?.handles ?? [];
@@ -171,7 +172,7 @@ export function confirmAgentStarted(
               operation: existing.operation,
               phase: "running",
             },
-            existing.hostRuntime,
+            input.hostRuntime ?? existing.hostRuntime,
           )
         : handle,
     ),
