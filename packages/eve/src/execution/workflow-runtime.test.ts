@@ -23,6 +23,7 @@ const cancelRunMock = vi.fn();
 const startMock = vi.fn();
 const deriveRunPayloadKeysMock = vi.fn();
 const hydrateWorkflowArgumentsMock = vi.fn();
+const getWorkflowRunStreamIdMock = vi.fn();
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   cancelRun: (...args: unknown[]) => cancelRunMock(...args),
@@ -38,6 +39,10 @@ vi.mock("#compiled/@workflow/core/serialization.js", () => ({
   hydrateWorkflowArguments: (...args: unknown[]) => hydrateWorkflowArgumentsMock(...args),
 }));
 
+vi.mock("#compiled/@workflow/core/util.js", () => ({
+  getWorkflowRunStreamId: (...args: unknown[]) => getWorkflowRunStreamIdMock(...args),
+}));
+
 vi.mock("#runtime/sessions/compiled-agent-cache.js", () => ({
   getCompiledRuntimeAgentBundle: vi.fn(),
 }));
@@ -51,8 +56,50 @@ afterEach(() => {
   startMock.mockReset();
   deriveRunPayloadKeysMock.mockReset();
   hydrateWorkflowArgumentsMock.mockReset();
+  getWorkflowRunStreamIdMock.mockReset();
   vi.mocked(getCompiledRuntimeAgentBundle).mockReset();
   vi.unstubAllEnvs();
+});
+
+describe("createWorkflowRuntime#getStreamTailIndex", () => {
+  function buildRuntime() {
+    return createWorkflowRuntime({ compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource });
+  }
+
+  it.each([-1, 0, 17])(
+    "reads the default stream tail index from metadata (%s)",
+    async (tailIndex) => {
+      const get = vi.fn();
+      const getInfo = vi.fn(async () => ({ done: false, tailIndex }));
+      getWorkflowRunStreamIdMock.mockReturnValue("strm_session-1_user");
+      getWorldMock.mockResolvedValue({ streams: { get, getInfo } });
+
+      await expect(buildRuntime().getStreamTailIndex("session-1")).resolves.toBe(tailIndex);
+
+      expect(getWorkflowRunStreamIdMock).toHaveBeenCalledOnce();
+      expect(getWorkflowRunStreamIdMock).toHaveBeenCalledWith("session-1");
+      expect(getInfo).toHaveBeenCalledOnce();
+      expect(getInfo).toHaveBeenCalledWith("session-1", "strm_session-1_user");
+      expect(get).not.toHaveBeenCalled();
+      expect(getRunMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves stream metadata failures", async () => {
+    const failure = new Error("workflow stream metadata unavailable");
+    const get = vi.fn();
+    const getInfo = vi.fn(async () => {
+      throw failure;
+    });
+    getWorkflowRunStreamIdMock.mockReturnValue("strm_session-1_user");
+    getWorldMock.mockResolvedValue({ streams: { get, getInfo } });
+
+    await expect(buildRuntime().getStreamTailIndex("session-1")).rejects.toBe(failure);
+
+    expect(getInfo).toHaveBeenCalledOnce();
+    expect(get).not.toHaveBeenCalled();
+    expect(getRunMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("workflowEntryReference", () => {

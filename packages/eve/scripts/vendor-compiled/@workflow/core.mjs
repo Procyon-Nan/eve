@@ -189,6 +189,10 @@ export default {
       entry: "dist/private.js",
       outputPath: "private",
     },
+    {
+      entry: "dist/util.js",
+      outputPath: "util",
+    },
   ],
   copyDeclarations,
 };

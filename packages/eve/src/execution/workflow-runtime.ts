@@ -29,7 +29,13 @@ import {
   readParentLineage,
 } from "#execution/eve-workflow-attributes.js";
 import { createLogger, logError } from "#internal/logging.js";
-import { getHookByToken, getRun, getWorld, resumeHook } from "#internal/workflow/runtime.js";
+import {
+  getDefaultRunStreamTailIndex,
+  getHookByToken,
+  getRun,
+  getWorld,
+  resumeHook,
+} from "#internal/workflow/runtime.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
 import { ROOT_RUNTIME_AGENT_NODE_ID } from "#runtime/graph.js";
@@ -227,13 +233,7 @@ export function createWorkflowRuntime(config: {
     },
 
     async getStreamTailIndex(sessionId: string): Promise<number> {
-      // The readable is never consumed; cancel it so the unread source does not linger.
-      const readable = getRun(sessionId).getReadable();
-      try {
-        return await readable.getTailIndex();
-      } finally {
-        await readable.cancel().catch(() => {});
-      }
+      return getDefaultRunStreamTailIndex(sessionId);
     },
 
     async inspectSessionStart(sessionId: string): Promise<WorkflowSessionStartSnapshot> {
