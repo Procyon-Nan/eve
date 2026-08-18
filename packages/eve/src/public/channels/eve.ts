@@ -900,7 +900,10 @@ async function createSessionStreamResponse(request: Request, session: Session): 
 
   try {
     const tailIndex = includeTailIndex ? await session.getStreamTailIndex() : undefined;
-    const events = await session.getEventStream({ startIndex });
+    const eventLimit =
+      tailIndex === undefined ? undefined : countEventsThroughTail(startIndex, tailIndex);
+    const events =
+      eventLimit === 0 ? new ReadableStream<never>() : await session.getEventStream({ startIndex });
     const headers = new Headers({
       "cache-control": "no-store, no-transform",
       "content-type": EVE_MESSAGE_STREAM_CONTENT_TYPE,
@@ -912,7 +915,7 @@ async function createSessionStreamResponse(request: Request, session: Session): 
     if (tailIndex !== undefined) {
       headers.set(EVE_STREAM_TAIL_INDEX_HEADER, String(tailIndex));
     }
-    return new Response(serializeAsNdjson(events), {
+    return new Response(serializeAsNdjson(events, eventLimit), {
       headers,
     });
   } catch {
@@ -1185,16 +1188,70 @@ function parseStartIndex(request: Request): number | undefined | Response {
   return parsed;
 }
 
-function serializeAsNdjson(events: ReadableStream<unknown>): ReadableStream<Uint8Array> {
+function countEventsThroughTail(startIndex: number | undefined, tailIndex: number): number {
+  const resolvedStartIndex =
+    startIndex === undefined
+      ? 0
+      : startIndex < 0
+        ? Math.max(0, tailIndex + 1 + startIndex)
+        : startIndex;
+  return Math.max(0, tailIndex - resolvedStartIndex + 1);
+}
+
+function serializeAsNdjson(
+  events: ReadableStream<unknown>,
+  eventLimit?: number,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  return events.pipeThrough(
-    new TransformStream<unknown, Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoder.encode("\n"));
-      },
-      transform(event, controller) {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-      },
-    }),
-  );
+  let emittedEvents = 0;
+  let reader: ReadableStreamDefaultReader<unknown> | undefined;
+
+  const releaseReader = async (cancel: boolean, reason?: unknown): Promise<void> => {
+    const ownedReader = reader;
+    reader = undefined;
+    if (ownedReader === undefined) {
+      if (cancel && !events.locked) await events.cancel(reason).catch(() => undefined);
+      return;
+    }
+    try {
+      if (cancel) await ownedReader.cancel(reason).catch(() => undefined);
+    } finally {
+      ownedReader.releaseLock();
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode("\n"));
+    },
+    async pull(controller) {
+      if (eventLimit === 0) {
+        controller.close();
+        return;
+      }
+
+      reader ??= events.getReader();
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          await releaseReader(false);
+          controller.close();
+          return;
+        }
+
+        controller.enqueue(encoder.encode(`${JSON.stringify(result.value)}\n`));
+        emittedEvents += 1;
+        if (eventLimit !== undefined && emittedEvents >= eventLimit) {
+          await releaseReader(true);
+          controller.close();
+        }
+      } catch (error) {
+        await releaseReader(true, error);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await releaseReader(true, reason);
+    },
+  });
 }

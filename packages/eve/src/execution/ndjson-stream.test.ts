@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { parseNdjsonStream } from "#execution/ndjson-stream.js";
 
@@ -99,5 +99,20 @@ describe("parseNdjsonStream", () => {
     });
 
     await expect(drain(parseNdjsonStream(() => source))).rejects.toThrow("source exploded");
+  });
+
+  it("cancels and unlocks a live source when JSON parsing fails", async () => {
+    const cancel = vi.fn();
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("not-json\n"));
+      },
+      cancel,
+    });
+
+    await expect(drain(parseNdjsonStream(() => source))).rejects.toThrow();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(source.locked).toBe(false);
   });
 });

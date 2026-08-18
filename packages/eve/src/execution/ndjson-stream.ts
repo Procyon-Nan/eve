@@ -2,9 +2,9 @@
  * Transforms a byte stream of newline-delimited JSON (NDJSON) into a
  * stream of parsed values.
  *
- * The byte stream is produced lazily by `createByteStream`, so the
- * underlying source (a world-local run readable) is only opened when the
- * returned stream is consumed.
+ * The byte stream is supplied by `createByteStream` when the parsed stream
+ * starts. The parsed stream owns that source reader through EOF, failure, or
+ * cancellation.
  *
  * Cancellation is forwarded to the source. When the returned stream is
  * cancelled — e.g. an SSE client disconnects and the server cancels the
@@ -23,6 +23,8 @@ export function parseNdjsonStream<T>(
   let buffer = "";
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let cancelled = false;
+  let reachedEof = false;
+  let failure: unknown;
 
   return new ReadableStream<T>({
     async start(controller) {
@@ -31,7 +33,10 @@ export function parseNdjsonStream<T>(
         while (true) {
           const { value, done } = await reader.read();
 
-          if (done) break;
+          if (done) {
+            reachedEof = true;
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
 
@@ -60,8 +65,10 @@ export function parseNdjsonStream<T>(
         }
         controller.close();
       } catch (error) {
+        failure = error;
         if (!cancelled) controller.error(error);
       } finally {
+        if (!reachedEof) await reader.cancel(failure).catch(() => undefined);
         reader.releaseLock();
       }
     },

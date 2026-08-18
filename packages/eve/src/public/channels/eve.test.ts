@@ -596,6 +596,129 @@ describe("eveChannel — stream cursor", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-eve-stream-tail-index")).toBe("41");
   });
+
+  it("closes an opted-in response at its fixed tail and cancels the live event reader", async () => {
+    const cancel = vi.fn();
+    const events = new ReadableStream({
+      start(controller) {
+        controller.enqueue({ type: "event.0" });
+        controller.enqueue({ type: "event.1" });
+        controller.enqueue({ type: "event.after-tail" });
+      },
+      cancel,
+    });
+    const handler = createEveStreamHandler({ auth: none() });
+    handler.getEventStream.mockResolvedValueOnce(events);
+    handler.getStreamTailIndex.mockResolvedValueOnce(1);
+
+    const response = await handler.fetch(
+      "https://eve.test/eve/v1/session/test-session-id/stream?includeTailIndex=1",
+    );
+
+    await expect(response.text()).resolves.toBe('\n{"type":"event.0"}\n{"type":"event.1"}\n');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(events.locked).toBe(false);
+  });
+
+  it("keeps an ordinary follow response live and releases it when the response is cancelled", async () => {
+    const cancel = vi.fn();
+    const events = new ReadableStream({
+      start(controller) {
+        controller.enqueue({ type: "event.0" });
+      },
+      cancel,
+    });
+    const handler = createEveStreamHandler({ auth: none() });
+    handler.getEventStream.mockResolvedValueOnce(events);
+    const response = await handler.fetch("https://eve.test/eve/v1/session/test-session-id/stream");
+    const reader = response.body!.getReader();
+
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("\n");
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('{"type":"event.0"}\n');
+    await reader.cancel(new DOMException("Aborted", "AbortError"));
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(events.locked).toBe(false);
+  });
+
+  it.each([
+    { startIndex: undefined, tailIndex: -1 },
+    { startIndex: 3, tailIndex: 1 },
+  ])(
+    "does not read a live stream when start $startIndex is past tail $tailIndex",
+    async ({ startIndex, tailIndex }) => {
+      const handler = createEveStreamHandler({ auth: none() });
+      handler.getStreamTailIndex.mockResolvedValueOnce(tailIndex);
+      const start = startIndex === undefined ? "" : `&startIndex=${String(startIndex)}`;
+
+      const response = await handler.fetch(
+        `https://eve.test/eve/v1/session/test-session-id/stream?includeTailIndex=1${start}`,
+      );
+
+      await expect(response.text()).resolves.toBe("\n");
+      expect(handler.getEventStream).not.toHaveBeenCalled();
+    },
+  );
+
+  it("applies a fixed tail to negative tail-relative reads", async () => {
+    const cancel = vi.fn();
+    const events = new ReadableStream({
+      start(controller) {
+        controller.enqueue({ type: "latest" });
+        controller.enqueue({ type: "after-tail" });
+      },
+      cancel,
+    });
+    const handler = createEveStreamHandler({ auth: none() });
+    handler.getEventStream.mockResolvedValueOnce(events);
+    handler.getStreamTailIndex.mockResolvedValueOnce(8);
+
+    const response = await handler.fetch(
+      "https://eve.test/eve/v1/session/test-session-id/stream?includeTailIndex=1&startIndex=-1",
+    );
+
+    await expect(response.text()).resolves.toBe('\n{"type":"latest"}\n');
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the event reader when event serialization fails", async () => {
+    const cancel = vi.fn();
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    const events = new ReadableStream({
+      start(controller) {
+        controller.enqueue(circular);
+      },
+      cancel,
+    });
+    const handler = createEveStreamHandler({ auth: none() });
+    handler.getEventStream.mockResolvedValueOnce(events);
+    handler.getStreamTailIndex.mockResolvedValueOnce(0);
+    const response = await handler.fetch(
+      "https://eve.test/eve/v1/session/test-session-id/stream?includeTailIndex=1",
+    );
+
+    await expect(response.text()).rejects.toThrow(/circular/i);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(events.locked).toBe(false);
+  });
+
+  it("releases the event reader when its source fails", async () => {
+    const events = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("event stream failed"));
+      },
+    });
+    const handler = createEveStreamHandler({ auth: none() });
+    handler.getEventStream.mockResolvedValueOnce(events);
+    handler.getStreamTailIndex.mockResolvedValueOnce(0);
+    const response = await handler.fetch(
+      "https://eve.test/eve/v1/session/test-session-id/stream?includeTailIndex=1",
+    );
+
+    await expect(response.text()).rejects.toThrow("event stream failed");
+    expect(events.locked).toBe(false);
+  });
 });
 
 describe("eveChannel — onMessage", () => {
