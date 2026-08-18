@@ -1,5 +1,11 @@
 # eve
 
+## 0.31.2-baigong.7
+
+### Patch Changes
+
+- c9acb0b: Bound finite session snapshot responses at the durable tail observed when each request opens, and release the Workflow stream reader before the response closes. Repeated snapshots and replay cancellations no longer depend on a parked session reaching EOF or on transport cancellation propagating back to the server.
+
 ## 0.31.2-baigong.6
 
 ### Patch Changes

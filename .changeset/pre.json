@@ -37,6 +37,7 @@
   "changesets": [
     "bright-files-opt-out",
     "calm-tools-project-output",
+    "finite-session-snapshots",
     "fixed-host-runtime-subagent-compilation",
     "fixed-workflow-fatal-error-contract",
     "locked-host-runtime-references",
