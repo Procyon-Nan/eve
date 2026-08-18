@@ -1,5 +1,11 @@
 # eve
 
+## 0.31.2-baigong.6
+
+### Patch Changes
+
+- 91f6404: Repeated snapshots of a parked session no longer hang or open unused background stream readers. Snapshot tail cursors now come directly from durable Workflow stream metadata.
+
 ## 0.31.2-baigong.5
 
 ### Patch Changes

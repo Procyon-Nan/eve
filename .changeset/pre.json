@@ -42,6 +42,7 @@
     "locked-host-runtime-references",
     "quiet-conversations-recover",
     "quiet-data-directories",
+    "steady-session-snapshots",
     "steady-subagent-replays",
     "steady-subagents-lineage",
     "warm-subagents-delegate"
