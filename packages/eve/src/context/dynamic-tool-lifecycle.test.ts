@@ -497,6 +497,9 @@ function simulateColdStart(ctx: ContextContainer): void {
     if (metadata.approvalResponseStepFnName !== undefined) {
       testRegistry.delete(metadata.approvalResponseStepFnName);
     }
+    if (metadata.toModelOutputStepFnName !== undefined) {
+      testRegistry.delete(metadata.toModelOutputStepFnName);
+    }
   }
   ctx.clearVirtualContext();
 }
@@ -1332,11 +1335,13 @@ describe("dispatchDynamicToolEvent", () => {
 function createFrameworkTool(
   description = "framework stub",
   executeFn: (input: Record<string, unknown>) => unknown = () => ({ ok: true }),
+  toModelOutput?: DynamicToolEntry["toModelOutput"],
 ): DynamicToolEntry {
   return defineTool({
     description,
     inputSchema: { type: "object" },
     execute: async (input: Record<string, unknown>): Promise<unknown> => executeFn(input),
+    toModelOutput,
   });
 }
 
@@ -1574,6 +1579,7 @@ describe("framework dynamic tools (no bundler transform)", () => {
   it("rehydrates an untransformed executor and approval policies after a cold start", async () => {
     const ctx = createCtx();
     const execute = vi.fn(async () => ({ ok: true }));
+    const toModelOutput = vi.fn(() => ({ type: "text" as const, value: "projected" }));
     const request = vi.fn(async () => "user-approval" as const);
     const response = vi.fn(async () => ({ status: "allowed" }) as const);
     const handler = vi.fn(() => ({
@@ -1582,6 +1588,7 @@ describe("framework dynamic tools (no bundler transform)", () => {
         description: "dependency-created destructive op",
         execute,
         inputSchema: { type: "object" },
+        toModelOutput,
       }),
     }));
     const resolver = createResolver("session_guard", ["session.started"], handler);
@@ -1606,6 +1613,11 @@ describe("framework dynamic tools (no bundler transform)", () => {
     const tool = buildDynamicTools(ctx)[0]!;
     await expect(tool.execute!({}, executeOptions)).resolves.toEqual({ ok: true });
     expect(execute).toHaveBeenCalledOnce();
+    expect(await tool.toModelOutput!({ ok: true })).toEqual({
+      type: "text",
+      value: "projected",
+    });
+    expect(toModelOutput).toHaveBeenCalledExactlyOnceWith({ ok: true });
 
     const approval = tool.approval;
     if (approval === undefined || typeof approval === "function") {
@@ -1644,6 +1656,53 @@ describe("framework dynamic tools (no bundler transform)", () => {
 
     await expect(approval.response!(responseCtx)).resolves.toEqual({ status: "allowed" });
     expect(response).toHaveBeenCalledExactlyOnceWith(responseCtx);
+  });
+
+  it("rehydrates a missing runtime mapper when the compiled executor remains registered", async () => {
+    const ctx = createCtx();
+    const executeStepId = `test-step-${++stepCounter}`;
+    testRegistry.set(executeStepId, () => ({ raw: true }));
+    const handler = vi.fn(() => {
+      const entry = defineTool({
+        description: "compiled executor with runtime mapper",
+        execute: async () => ({ raw: true }),
+        inputSchema: { type: "object" },
+        toModelOutput: () => ({ type: "text" as const, value: "projected" }),
+      });
+      Object.assign(entry, {
+        __closureVars: {},
+        __executeStepFn: { stepId: executeStepId },
+      });
+      return { inspect: entry };
+    });
+    const resolver = createResolver("mapper_only", ["session.started"], handler);
+
+    try {
+      await dispatchDynamicToolEvent({
+        ctx,
+        event: makeEvent("session.started"),
+        messages: [],
+        resolvers: [resolver],
+      });
+      const mapperStepId = ctx.get(SessionDynamicToolMetadataKey)?.[0]?.toModelOutputStepFnName;
+      if (mapperStepId === undefined) throw new Error("Expected runtime mapper metadata.");
+      testRegistry.delete(mapperStepId);
+
+      await hydrateDynamicSessionTools({
+        ctx,
+        event: createSessionStartedEvent(),
+        messages: [],
+        resolvers: [resolver],
+      });
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(await buildDynamicTools(ctx)[0]!.toModelOutput!({ raw: true })).toEqual({
+        type: "text",
+        value: "projected",
+      });
+    } finally {
+      testRegistry.delete(executeStepId);
+    }
   });
 
   it("propagates outputSchema from dynamic entries into harness tools and metadata", async () => {
@@ -1729,5 +1788,205 @@ describe("framework dynamic tools (no bundler transform)", () => {
     expect(tools[0]!.description).toBe("v2");
     const result2 = await tools[0]!.execute!({}, executeOptions);
     expect(result2).toEqual({ version: 2 });
+  });
+
+  it("preserves a step-scoped toModelOutput mapper as a live closure", async () => {
+    const ctx = createCtx();
+    const mapper = vi.fn((output: unknown) => ({ type: "json" as const, value: output }));
+    const resolver = createResolver("live", ["step.started"], () => ({
+      inspect: createFrameworkTool("live mapper", () => ({ raw: true }), mapper),
+    }));
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: makeEvent("step.started"),
+    });
+
+    const tool = buildDynamicTools(ctx)[0]!;
+    expect(tool.toModelOutput).toBe(mapper);
+    expect(await tool.toModelOutput!({ raw: true })).toEqual({
+      type: "json",
+      value: { raw: true },
+    });
+  });
+
+  it.each(["session.started", "turn.started"] as const)(
+    "replays a runtime %s toModelOutput mapper across model steps",
+    async (eventType) => {
+      const ctx = createCtx();
+      const mapper = vi.fn((output: unknown) => ({
+        type: "text" as const,
+        value: `projected:${JSON.stringify(output)}`,
+      }));
+      const resolver = createResolver("attachment", [eventType], () => ({
+        read: createFrameworkTool("read attachment", () => ({ base64: "raw" }), mapper),
+      }));
+
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent(eventType),
+      });
+      ctx.clearVirtualContext();
+
+      const metadata =
+        eventType === "session.started"
+          ? ctx.get(SessionDynamicToolMetadataKey)
+          : ctx.get(TurnDynamicToolMetadataKey);
+      expect(metadata?.[0]?.toModelOutputStepFnName).toBe(
+        `eve:dynamic-tool-model-output:${ctx.get(SessionIdKey)}:${eventType}:attachment:read`,
+      );
+      expect(metadata?.[0]?.toModelOutputClosureVars).toEqual({});
+
+      const tool = buildDynamicTools(ctx)[0]!;
+      expect(await tool.toModelOutput!({ base64: "raw" })).toEqual({
+        type: "text",
+        value: 'projected:{"base64":"raw"}',
+      });
+      expect(mapper).toHaveBeenCalledExactlyOnceWith({ base64: "raw" });
+    },
+  );
+
+  it("replays compiler mapper metadata with an independent closure snapshot", async () => {
+    const ctx = createCtx();
+    const mapperStepId = `test-mapper-${++stepCounter}`;
+    const mapperStepFn = vi.fn((vars: unknown, output: unknown) => ({
+      type: "text",
+      value: `${(vars as { prefix: string }).prefix}:${String(output)}`,
+    }));
+    testRegistry.set(mapperStepId, mapperStepFn);
+
+    const resolver = createResolver("compiled", ["turn.started"], () => {
+      const entry = createReplayableTool("compiled mapper");
+      Object.assign(entry, {
+        __toModelOutputStepFn: { stepId: mapperStepId },
+        __toModelOutputClosureVars: { prefix: "visible" },
+        toModelOutput: () => ({ type: "text", value: "live" }),
+      });
+      return { project: entry };
+    });
+
+    try {
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("turn.started"),
+      });
+
+      const durableSnapshot = JSON.parse(
+        JSON.stringify(ctx.get(TurnDynamicToolMetadataKey)),
+      ) as DurableDynamicToolMetadata[];
+      ctx.set(TurnDynamicToolMetadataKey, durableSnapshot);
+
+      const tool = buildDynamicTools(ctx)[0]!;
+      expect(await tool.toModelOutput!("payload")).toEqual({
+        type: "text",
+        value: "visible:payload",
+      });
+      expect(mapperStepFn).toHaveBeenCalledWith({ prefix: "visible" }, "payload");
+      expect(durableSnapshot[0]?.closureVars).toEqual({});
+      expect(durableSnapshot[0]?.toModelOutputClosureVars).toEqual({ prefix: "visible" });
+    } finally {
+      testRegistry.delete(mapperStepId);
+    }
+  });
+
+  it("keeps default model output behavior when durable metadata has no mapper", async () => {
+    const ctx = createCtx();
+    const resolver = createResolver("plain", ["turn.started"], () => ({
+      echo: createFrameworkTool("plain output"),
+    }));
+
+    await dispatchDynamicToolEvent({
+      ctx,
+      resolvers: [resolver],
+      messages: [],
+      event: makeEvent("turn.started"),
+    });
+
+    expect(buildDynamicTools(ctx)[0]?.toModelOutput).toBeUndefined();
+  });
+
+  it.each([
+    { mapperStepId: "missing-mapper", mapperVars: {} },
+    { mapperStepId: "registered-mapper", mapperVars: undefined },
+  ])(
+    "omits a tool when declared mapper replay metadata is incomplete",
+    ({ mapperStepId, mapperVars }) => {
+      const executeStepId = `test-execute-${++stepCounter}`;
+      testRegistry.set(executeStepId, () => ({ raw: true }));
+      if (mapperStepId === "registered-mapper") {
+        testRegistry.set(mapperStepId, () => ({ type: "text", value: "projected" }));
+      }
+      const metadata: DurableDynamicToolMetadata[] = [
+        {
+          name: "sensitive",
+          description: "sensitive output",
+          inputSchema: { type: "object" },
+          resolverSlug: "secure",
+          entryKey: "read",
+          executeStepFnName: executeStepId,
+          closureVars: {},
+          toModelOutputStepFnName: mapperStepId,
+          toModelOutputClosureVars: mapperVars,
+        },
+      ];
+
+      try {
+        expect(replayDynamicSessionTools(metadata, [])).toEqual([]);
+        const ctx = createCtx();
+        ctx.set(TurnDynamicToolMetadataKey, metadata);
+        expect(buildDynamicTools(ctx)).toEqual([]);
+      } finally {
+        testRegistry.delete(executeStepId);
+        testRegistry.delete(mapperStepId);
+      }
+    },
+  );
+
+  it("isolates same-named runtime mappers between concurrent sessions", async () => {
+    const ctxA = createCtx("session-a");
+    const ctxB = createCtx("session-b");
+    const resolverA = createResolver("shared", ["turn.started"], () => ({
+      inspect: createFrameworkTool(
+        "session a",
+        () => ({ session: "a" }),
+        () => ({ type: "text", value: "mapped-a" }),
+      ),
+    }));
+    const resolverB = createResolver("shared", ["turn.started"], () => ({
+      inspect: createFrameworkTool(
+        "session b",
+        () => ({ session: "b" }),
+        () => ({ type: "text", value: "mapped-b" }),
+      ),
+    }));
+
+    await Promise.all([
+      dispatchDynamicToolEvent({
+        ctx: ctxA,
+        resolvers: [resolverA],
+        messages: [],
+        event: makeEvent("turn.started"),
+      }),
+      dispatchDynamicToolEvent({
+        ctx: ctxB,
+        resolvers: [resolverB],
+        messages: [],
+        event: makeEvent("turn.started"),
+      }),
+    ]);
+
+    const metadataA = ctxA.get(TurnDynamicToolMetadataKey)![0]!;
+    const metadataB = ctxB.get(TurnDynamicToolMetadataKey)![0]!;
+    expect(metadataA.toModelOutputStepFnName).not.toBe(metadataB.toModelOutputStepFnName);
+    const toolA = buildDynamicTools(ctxA)[0]!;
+    const toolB = buildDynamicTools(ctxB)[0]!;
+    expect(await toolA.toModelOutput!({})).toEqual({ type: "text", value: "mapped-a" });
+    expect(await toolB.toModelOutput!({})).toEqual({ type: "text", value: "mapped-b" });
   });
 });

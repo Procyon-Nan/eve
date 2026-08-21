@@ -163,6 +163,8 @@ export interface DurableDynamicToolMetadata {
   readonly approvalStepFnName?: string;
   readonly approvalResponseStepFnName?: string;
   readonly closureVars?: Record<string, unknown>;
+  readonly toModelOutputStepFnName?: string;
+  readonly toModelOutputClosureVars?: Record<string, unknown>;
 }
 
 /**

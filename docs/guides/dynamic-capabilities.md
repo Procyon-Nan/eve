@@ -160,11 +160,11 @@ export default defineDynamic({
 });
 ```
 
-### Prefer an inline `execute` function
+### Prefer inline `execute` and `toModelOutput` functions
 
-Write `execute` as an inline function expression, arrow, or method shorthand placed directly as the property value. The bundler transform stores the function and its closure variables for durable replay without rerunning the resolver.
+Write `execute` and optional `toModelOutput` as inline function expressions, arrows, or method shorthands placed directly as the property values. The bundler transform stores each function with a separate closure snapshot for durable replay without rerunning the resolver. Keeping the snapshots separate means the model-output mapper only persists values it actually uses.
 
-The transform does not detect `execute: myFn`, `execute: makeFn()`, or executors created inside an imported dependency. For a `session.started` tool, eve can reconstruct these live functions by rerunning the owning resolver after a durable resume. Keep session resolvers idempotent and avoid unnecessary side effects. A `turn.started` tool still requires an inline executor to survive a fresh runtime.
+The transform does not detect references such as `execute: myFn` or `toModelOutput: projectOutput`, call results such as `execute: makeFn()`, or functions created inside an imported dependency. eve registers these live functions for replay in the current runtime process. For a `session.started` tool, eve can reconstruct them by rerunning the owning resolver after a durable resume. Keep session resolvers idempotent and avoid unnecessary side effects. A `turn.started` tool still requires inline functions to preserve its executor and authored model-output projection after a fresh runtime. Step-scoped tools re-resolve before each model call and retain their live functions.
 
 ### Naming
 

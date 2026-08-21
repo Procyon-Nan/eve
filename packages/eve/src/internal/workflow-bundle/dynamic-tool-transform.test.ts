@@ -2,6 +2,8 @@ import { describe, expect, it, beforeEach } from "vitest";
 
 import { transformDynamicToolExecute } from "./dynamic-tool-transform.js";
 
+const transformTestStepIds = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // Helpers for evaluating transformed code
 // ---------------------------------------------------------------------------
@@ -47,13 +49,22 @@ async function transformAndEval(
   const defineTool = (entry: Record<string, unknown>) =>
     Object.assign(entry, { [Symbol.for("eve:tool-brand")]: true });
 
+  const registrySym = Symbol.for("@workflow/core//registeredSteps");
+  const registryBefore = new Set(
+    (globalThis as Record<symbol, Map<string, Function> | undefined>)[registrySym]?.keys() ?? [],
+  );
+
   // Evaluate in a function scope to provide our stubs. The transform
   // prepends its own __eveStepRegistry setup, so we don't need to add it.
   const evalFn = new Function("defineDynamic", "defineTool", `${code}\nreturn __exported;`);
   evalFn(defineDynamic, defineTool);
 
-  const registrySym = Symbol.for("@workflow/core//registeredSteps");
   const registry = (globalThis as Record<symbol, Map<string, Function>>)[registrySym] ?? new Map();
+  for (const stepId of registry.keys()) {
+    if (!registryBefore.has(stepId)) {
+      transformTestStepIds.add(stepId);
+    }
+  }
 
   return {
     code,
@@ -67,11 +78,17 @@ async function transformAndEval(
   };
 }
 
-// Clear step registry between tests so counter-based names don't collide
+// Remove only functions registered by this file so parallel unit files that
+// share the process-wide workflow registry retain their own replay functions.
 beforeEach(() => {
   const sym = Symbol.for("@workflow/core//registeredSteps");
   const reg = (globalThis as Record<symbol, Map<string, Function> | undefined>)[sym];
-  if (reg) reg.clear();
+  if (reg) {
+    for (const stepId of transformTestStepIds) {
+      reg.delete(stepId);
+    }
+  }
+  transformTestStepIds.clear();
 });
 
 // ===========================================================================
@@ -2135,5 +2152,146 @@ export default defineDynamic({
     expect(wrapperArgs).not.toMatch(/\bunknown>\b/);
     // Should have the hoisted function
     expect(code).toContain("__eve_dynamic_exec_");
+  });
+});
+
+describe("transformDynamicToolExecute — toModelOutput replay", () => {
+  it("transforms method, arrow, and function-expression mappers", async () => {
+    const source = `
+import { defineDynamic, defineTool } from "eve/tools";
+
+export default defineDynamic({
+  events: {
+    "turn.started": async () => {
+      const prefix = "mapped";
+      return {
+        method: defineTool({
+          description: "method",
+          inputSchema: { type: "object" },
+          execute() { return { value: "method" }; },
+          toModelOutput(output) { return { type: "text", value: prefix + ":" + output.value }; },
+        }),
+        arrow: defineTool({
+          description: "arrow",
+          inputSchema: { type: "object" },
+          execute: () => ({ value: "arrow" }),
+          toModelOutput: async (output) => ({ type: "text", value: prefix + ":" + output.value }),
+        }),
+        expression: defineTool({
+          description: "expression",
+          inputSchema: { type: "object" },
+          execute: function () { return { value: "expression" }; },
+          toModelOutput: function (output) { return { type: "text", value: prefix + ":" + output.value }; },
+        }),
+      };
+    },
+  },
+});
+`;
+
+    const { callHandler } = await transformAndEval("tools/mapper-syntax.ts", source);
+    const tools = await callHandler();
+
+    expect((tools.method as Record<string, Function>).toModelOutput!({ value: "method" })).toEqual({
+      type: "text",
+      value: "mapped:method",
+    });
+    await expect(
+      (tools.arrow as Record<string, Function>).toModelOutput!({ value: "arrow" }),
+    ).resolves.toEqual({ type: "text", value: "mapped:arrow" });
+    expect(
+      (tools.expression as Record<string, Function>).toModelOutput!({ value: "expression" }),
+    ).toEqual({ type: "text", value: "mapped:expression" });
+
+    const mapperStepIds = new Set<string>();
+    for (const tool of Object.values(tools) as Record<string, unknown>[]) {
+      expect(tool.__toModelOutputStepFn).toBeTypeOf("function");
+      expect(tool.__toModelOutputClosureVars).toEqual({ prefix: "mapped" });
+      mapperStepIds.add(
+        (tool.__toModelOutputStepFn as Function & { readonly stepId: string }).stepId,
+      );
+    }
+    expect([...mapperStepIds]).toHaveLength(3);
+  });
+
+  it("captures mapper handler and nested-helper values independently from execute", async () => {
+    const source = `
+import { defineDynamic, defineTool } from "eve/tools";
+
+export default defineDynamic({
+  events: {
+    "turn.started": async (event, ctx) => {
+      const executePrefix = "raw";
+      const mapperPrefix = ctx.session.id;
+      function buildTool(name) {
+        const eventKind = event.kind;
+        return defineTool({
+          description: name,
+          inputSchema: { type: "object" },
+          execute(input) { return { value: executePrefix + ":" + input.value }; },
+          toModelOutput(output) {
+            return { type: "text", value: mapperPrefix + ":" + name + ":" + eventKind + ":" + output.value };
+          },
+        });
+      }
+      return { alpha: buildTool("alpha"), beta: buildTool("beta") };
+    },
+  },
+});
+`;
+
+    const { callHandler, registry } = await transformAndEval("tools/mapper-closures.ts", source, {
+      ctx: { session: { id: "session-42" } },
+      event: { kind: "turn" },
+    });
+    const tools = await callHandler();
+    const alpha = tools.alpha as Record<string, unknown>;
+    const beta = tools.beta as Record<string, unknown>;
+
+    expect(alpha.__closureVars).toEqual({ executePrefix: "raw" });
+    expect(alpha.__toModelOutputClosureVars).toEqual({
+      eventKind: "turn",
+      mapperPrefix: "session-42",
+      name: "alpha",
+    });
+    expect(beta.__toModelOutputClosureVars).toEqual({
+      eventKind: "turn",
+      mapperPrefix: "session-42",
+      name: "beta",
+    });
+
+    const alphaMapper = alpha.__toModelOutputStepFn as Function & { stepId: string };
+    const betaMapper = beta.__toModelOutputStepFn as Function & { stepId: string };
+    expect(alphaMapper.stepId).toBe(betaMapper.stepId);
+    expect(
+      registry.get(alphaMapper.stepId)!(
+        JSON.parse(JSON.stringify(alpha.__toModelOutputClosureVars)),
+        { value: "payload" },
+      ),
+    ).toEqual({ type: "text", value: "session-42:alpha:turn:payload" });
+  });
+
+  it("does not inject mapper metadata when a tool only defines execute", async () => {
+    const source = `
+import { defineDynamic, defineTool } from "eve/tools";
+export default defineDynamic({
+  events: {
+    "session.started": async () => {
+      return {
+        echo: defineTool({
+          description: "echo",
+          inputSchema: { type: "object" },
+          execute(input) { return input; },
+        }),
+      };
+    },
+  },
+});
+`;
+
+    const result = await transformDynamicToolExecute("tools/execute-only.ts", source);
+    expect(result?.code).toContain("__executeStepFn");
+    expect(result?.code).not.toContain("__toModelOutputStepFn");
+    expect(result?.code).not.toContain("__toModelOutputClosureVars");
   });
 });

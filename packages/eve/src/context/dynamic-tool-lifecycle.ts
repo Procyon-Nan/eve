@@ -33,6 +33,12 @@ import {
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
+import {
+  getDynamicToolStepRegistry,
+  lookupDynamicToolStepFunction,
+  replayDynamicTools,
+  type RegisteredDynamicToolStepFunction,
+} from "#context/dynamic-tool-replay.js";
 
 const log = createLogger("dynamic-tools");
 
@@ -100,73 +106,23 @@ export function replayDynamicSessionTools(
   metadata: readonly DurableDynamicToolMetadata[],
   _resolvers: readonly ResolvedDynamicToolResolver[],
 ): readonly HarnessToolDefinition[] {
-  const tools: HarnessToolDefinition[] = [];
-
-  for (const m of metadata) {
-    if (!m.executeStepFnName || !m.closureVars) {
-      log.warn(
-        `Dynamic tool "${m.name}" has no registered step function — ` +
-          "skipping on this step. The bundler transform may not have processed this tool file.",
-      );
-      continue;
-    }
-
-    const stepFn = lookupStepFunction(m.executeStepFnName);
-    if (!stepFn) {
-      log.warn(
-        `Dynamic tool "${m.name}" references step function "${m.executeStepFnName}" ` +
-          "which is not registered — skipping on this step.",
-      );
-      continue;
-    }
-
-    tools.push({
-      description: m.description,
-      execute: createToolExecuteWithAuth({
-        scope: m.name,
-        execute: (input, ctx) => stepFn(m.closureVars, input, ctx),
-      }),
-      inputSchema: toInputSchema(m.inputSchema),
-      name: m.name,
-      outputSchema: toOutputSchema(m.outputSchema),
-    });
-  }
-
-  return tools;
+  return replayDynamicTools(metadata);
 }
 
 // ---------------------------------------------------------------------------
 // Step function lookup + serialization helpers
 // ---------------------------------------------------------------------------
 
-function getStepRegistry(): Map<string, Function> {
-  const key = Symbol.for("@workflow/core//registeredSteps");
-  const g = globalThis as Record<symbol, Map<string, Function> | undefined>;
-  let registry = g[key];
-  if (registry === undefined) {
-    registry = new Map();
-    g[key] = registry;
-  }
-  return registry;
-}
-
-function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) | null {
-  try {
-    const fn = getStepRegistry().get(stepId);
-    return fn ? (fn as (...args: unknown[]) => unknown) : null;
-  } catch {
-    return null;
-  }
-}
-
 function hasMissingProcessCallback(metadata: DurableDynamicToolMetadata): boolean {
   return (
     (metadata.executeStepFnName?.startsWith("eve:framework-dynamic:") === true &&
-      lookupStepFunction(metadata.executeStepFnName) === null) ||
+      lookupDynamicToolStepFunction(metadata.executeStepFnName) === null) ||
+    (metadata.toModelOutputStepFnName?.startsWith("eve:dynamic-tool-model-output:") === true &&
+      lookupDynamicToolStepFunction(metadata.toModelOutputStepFnName) === null) ||
     (metadata.approvalStepFnName !== undefined &&
-      lookupStepFunction(metadata.approvalStepFnName) === null) ||
+      lookupDynamicToolStepFunction(metadata.approvalStepFnName) === null) ||
     (metadata.approvalResponseStepFnName !== undefined &&
-      lookupStepFunction(metadata.approvalResponseStepFnName) === null)
+      lookupDynamicToolStepFunction(metadata.approvalResponseStepFnName) === null)
   );
 }
 
@@ -178,8 +134,11 @@ interface ProcessCallbackGroup {
 const processCallbackQueue: ProcessCallbackGroup[] = [];
 const processCallbackGroups = new Map<string, ProcessCallbackGroup>();
 
-function registerProcessCallbacks(groupId: string, callbacks: ReadonlyMap<string, Function>): void {
-  const registry = getStepRegistry();
+function registerProcessCallbacks(
+  groupId: string,
+  callbacks: ReadonlyMap<string, RegisteredDynamicToolStepFunction>,
+): void {
+  const registry = getDynamicToolStepRegistry();
   const previous = processCallbackGroups.get(groupId);
   if (previous !== undefined) {
     for (const callbackId of previous.callbackIds) registry.delete(callbackId);
@@ -235,6 +194,13 @@ function durableKeyForEvent(
 interface ResolveResult {
   readonly metadata: readonly DurableDynamicToolMetadata[];
   readonly liveTools: readonly HarnessToolDefinition[];
+}
+
+interface ReplayableDynamicToolEntry extends DynamicToolEntry {
+  readonly __executeStepFn?: { readonly stepId?: string };
+  readonly __closureVars?: Record<string, unknown>;
+  readonly __toModelOutputStepFn?: { readonly stepId?: string };
+  readonly __toModelOutputClosureVars?: Record<string, unknown>;
 }
 
 function readDynamicToolResult(
@@ -299,7 +265,7 @@ async function resolveToolsFromEvent(
 
     const { resolver, entries, isSingle } = outcome.value;
     const named = qualifyDynamicToolNames(resolver, isSingle, entries);
-    const processCallbacks = new Map<string, Function>();
+    const processCallbacks = new Map<string, RegisteredDynamicToolStepFunction>();
     for (const { name, entryKey, entry } of named) {
       const previousOwner = dynamicToolOwners.get(name);
       if (previousOwner !== undefined && previousOwner !== resolver.slug) {
@@ -314,14 +280,9 @@ async function resolveToolsFromEvent(
         continue;
       }
 
-      const stepFn =
-        "__executeStepFn" in entry
-          ? (entry as { __executeStepFn?: { stepId?: string } }).__executeStepFn
-          : undefined;
-      const closureVars =
-        "__closureVars" in entry
-          ? (entry as { __closureVars?: Record<string, unknown> }).__closureVars
-          : undefined;
+      const replayableEntry = entry as ReplayableDynamicToolEntry;
+      const stepFn = replayableEntry.__executeStepFn;
+      const closureVars = replayableEntry.__closureVars;
 
       let executeStepFnName = stepFn?.stepId;
       let serializedClosureVars =
@@ -362,6 +323,20 @@ async function resolveToolsFromEvent(
         }
       }
 
+      let toModelOutputStepFnName = replayableEntry.__toModelOutputStepFn?.stepId;
+      let toModelOutputClosureVars =
+        replayableEntry.__toModelOutputClosureVars === undefined
+          ? undefined
+          : safeSerialize(replayableEntry.__toModelOutputClosureVars);
+      if (entry.toModelOutput !== undefined && toModelOutputStepFnName === undefined) {
+        toModelOutputStepFnName = `eve:dynamic-tool-model-output:${ctx.require(SessionIdKey)}:${event.type}:${resolver.slug}:${entryKey}`;
+        const originalToModelOutput = entry.toModelOutput.bind(entry);
+        processCallbacks.set(toModelOutputStepFnName, (_closureVars: unknown, output: unknown) =>
+          originalToModelOutput(output),
+        );
+        toModelOutputClosureVars = {};
+      }
+
       metadata.push({
         name,
         description: entry.description,
@@ -373,6 +348,8 @@ async function resolveToolsFromEvent(
         approvalStepFnName,
         approvalResponseStepFnName,
         closureVars: serializedClosureVars,
+        toModelOutputStepFnName,
+        toModelOutputClosureVars,
       });
     }
 
@@ -380,7 +357,7 @@ async function resolveToolsFromEvent(
       registerProcessCallbacks(`${ctx.require(SessionIdKey)}:${resolver.slug}`, processCallbacks);
     } else {
       for (const [callbackId, callback] of processCallbacks) {
-        getStepRegistry().set(callbackId, callback);
+        getDynamicToolStepRegistry().set(callbackId, callback);
       }
     }
   }

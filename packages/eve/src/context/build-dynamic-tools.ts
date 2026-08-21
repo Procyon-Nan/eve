@@ -6,110 +6,7 @@ import {
   TurnDynamicToolMetadataKey,
   LiveStepToolsKey,
 } from "#context/keys.js";
-import type { DurableDynamicToolMetadata } from "#context/keys.js";
-import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
-import { createLogger } from "#internal/logging.js";
-import type {
-  ApprovalContext,
-  ApprovalResponseDecision,
-  ApprovalResponseContext,
-  ApprovalStatus,
-} from "#public/definitions/approval.js";
-import { toInputSchema, toOutputSchema } from "#shared/tool-schema.js";
-
-const log = createLogger("dynamic-tools");
-
-function lookupStepFunction(stepId: string): ((...args: unknown[]) => unknown) | null {
-  try {
-    const registry = (globalThis as Record<symbol, Map<string, Function> | undefined>)[
-      Symbol.for("@workflow/core//registeredSteps")
-    ];
-    if (registry === undefined) return null;
-    const fn = registry.get(stepId);
-    return fn ? (fn as (...args: unknown[]) => unknown) : null;
-  } catch {
-    return null;
-  }
-}
-
-function replayTools(metadata: readonly DurableDynamicToolMetadata[]): HarnessToolDefinition[] {
-  const tools: HarnessToolDefinition[] = [];
-
-  for (const m of metadata) {
-    if (!m.executeStepFnName || !m.closureVars) {
-      log.warn(
-        `Dynamic tool "${m.name}" has no registered step function — ` +
-          "skipping on this step. The bundler transform may not have processed this tool file.",
-      );
-      continue;
-    }
-
-    const stepFn = lookupStepFunction(m.executeStepFnName);
-    if (!stepFn) {
-      log.warn(
-        `Dynamic tool "${m.name}" references step function "${m.executeStepFnName}" ` +
-          "which is not registered — skipping on this step.",
-      );
-      continue;
-    }
-
-    tools.push({
-      description: m.description,
-      execute: createToolExecuteWithAuth({
-        scope: m.name,
-        execute: (input, ctx) => stepFn(m.closureVars, input, ctx),
-      }),
-      inputSchema: toInputSchema(m.inputSchema),
-      name: m.name,
-      approval: buildReplayedApproval(m),
-      outputSchema: toOutputSchema(m.outputSchema),
-    });
-  }
-
-  return tools;
-}
-
-function buildReplayedApproval(
-  metadata: DurableDynamicToolMetadata,
-): HarnessToolDefinition["approval"] | undefined {
-  if (metadata.approvalStepFnName === undefined) {
-    return undefined;
-  }
-
-  const approvalStepFn = lookupStepFunction(metadata.approvalStepFnName);
-  if (approvalStepFn === null) {
-    log.warn(
-      `Dynamic tool "${metadata.name}" references approval function "${metadata.approvalStepFnName}" ` +
-        "which is not registered — requiring approval by default.",
-    );
-    return () => "user-approval";
-  }
-
-  const policy = async (approvalCtx: ApprovalContext) =>
-    (await approvalStepFn(metadata.closureVars ?? {}, approvalCtx)) as ApprovalStatus;
-  if (metadata.approvalResponseStepFnName === undefined) return policy;
-
-  const responseStepFn = lookupStepFunction(metadata.approvalResponseStepFnName);
-  if (responseStepFn === null) {
-    log.warn(
-      `Dynamic tool "${metadata.name}" references response authorizer ` +
-        `"${metadata.approvalResponseStepFnName}" which is not registered — rejecting responses.`,
-    );
-    return {
-      request: policy,
-      response: async () => ({
-        reason: "Approval response authorization is temporarily unavailable.",
-        status: "rejected" as const,
-      }),
-    };
-  }
-
-  return {
-    request: policy,
-    response: async (responseCtx: ApprovalResponseContext) =>
-      (await responseStepFn(metadata.closureVars ?? {}, responseCtx)) as ApprovalResponseDecision,
-  };
-}
+import { replayDynamicTools } from "#context/dynamic-tool-replay.js";
 
 /**
  * Builds live dynamic tool definitions. Narrower scopes appear first
@@ -134,7 +31,7 @@ export function buildResponseAuthorizationTools(input: {
 
 export function buildDynamicTools(ctx: ContextReader): readonly HarnessToolDefinition[] {
   const step = ctx.get(LiveStepToolsKey) ?? [];
-  const turn = replayTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
-  const session = replayTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
+  const turn = replayDynamicTools(ctx.get(TurnDynamicToolMetadataKey) ?? []);
+  const session = replayDynamicTools(ctx.get(SessionDynamicToolMetadataKey) ?? []);
   return [...step, ...turn, ...session];
 }
