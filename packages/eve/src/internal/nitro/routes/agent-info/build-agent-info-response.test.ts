@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCompiledAgentManifest } from "#compiler/manifest.js";
+import { createCompiledAgentManifest, DISABLED_COMPILED_SANDBOX_KIND } from "#compiler/manifest.js";
 import {
   buildAgentInfoResponse,
   buildFrameworkToolInfo,
@@ -91,9 +91,65 @@ describe("buildFrameworkToolInfo", () => {
       status: "replaced",
     });
   });
+
+  it("reports sandbox-backed tools as unavailable when sandbox access is disabled", () => {
+    const info = buildFrameworkToolInfo({
+      authoredToolNames: new Set(),
+      delegationToolNames: new Set(),
+      disabledFrameworkToolNames: new Set(),
+      sandboxDisabled: true,
+    });
+
+    expect(info.available.map((tool) => tool.name)).not.toContain("bash");
+    expect(info.framework.find((tool) => tool.name === "bash")).toMatchObject({
+      disabledBySandbox: true,
+      status: "unavailable",
+    });
+    expect(info.framework.find((tool) => tool.name === "glob")).toMatchObject({
+      disabledBySandbox: true,
+      status: "unavailable",
+    });
+    expect(info.framework.find((tool) => tool.name === "web_fetch")).toMatchObject({
+      disabledBySandbox: false,
+      status: "active",
+    });
+  });
 });
 
 describe("buildAgentInfoResponse", () => {
+  it("reports an explicit disabled sandbox without resolving a backend", async () => {
+    const manifest = createCompiledAgentManifest({
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      config: {
+        model: { id: "openai/gpt-5", routing: { kind: "external", provider: "openai" } },
+        name: "no-sandbox-agent",
+      },
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+    });
+    const agent = await resolveAgent({
+      manifest,
+      moduleMap: { nodes: { __root__: { modules: {} } } },
+    });
+
+    const response = buildAgentInfoResponse(
+      { agent, manifest, schedules: [] },
+      { mode: "development" },
+    );
+
+    expect(response.sandbox).toEqual({
+      logicalPath: "sandbox.ts",
+      sourceId: "sandbox.ts",
+      sourceKind: "module",
+      status: "disabled",
+    });
+  });
+
   it("preserves direct-provider routing from the compiled manifest", async () => {
     const manifest = createCompiledAgentManifest({
       agentRoot: "/app/agent",

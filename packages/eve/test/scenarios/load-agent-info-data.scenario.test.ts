@@ -74,7 +74,10 @@ describe("loadAgentInfoData", () => {
       expect(data.agent.config?.name).toBe(data.manifest.config.name);
       expect(data.manifest.config.name).toBe(manifest.config.name);
       expect(data.agent.sandbox).not.toBeNull();
-      expect(data.agent.sandbox?.sourceKind).toBe("module");
+      expect(data.agent.sandbox).toMatchObject({
+        definition: { sourceKind: "module" },
+        kind: "configured",
+      });
       expect(data.schedules).toEqual([]);
     });
   });

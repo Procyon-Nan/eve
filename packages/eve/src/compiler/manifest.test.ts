@@ -5,10 +5,35 @@ import {
   createCompiledAgentResources,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
+  DISABLED_COMPILED_SANDBOX_KIND,
 } from "#compiler/manifest.js";
 import { classifyModelRouting } from "#internal/classify-model-routing.js";
 
 describe("compiledAgentManifestSchema", () => {
+  it("preserves an explicit disabled sandbox marker", () => {
+    const manifest = createCompiledAgentManifest({
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      config: {
+        model: { id: "openai/gpt-5.5", routing: classifyModelRouting("openai/gpt-5.5") },
+        name: "app",
+      },
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+    });
+
+    expect(compiledAgentManifestSchema.parse(manifest).sandbox).toEqual({
+      kind: "eve:disabled-sandbox",
+      logicalPath: "sandbox.ts",
+      sourceId: "sandbox.ts",
+      sourceKind: "module",
+    });
+  });
+
   it("accepts authored HEAD and OPTIONS channel routes", () => {
     const channel = {
       adapterKind: "mcp",

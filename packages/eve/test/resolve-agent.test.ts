@@ -211,19 +211,22 @@ describe("resolveAgent", () => {
       },
     ]);
     expect(resolved.sandbox).toEqual({
-      backend: expect.objectContaining({
-        create: expect.any(Function),
-        name: expect.any(String),
-      }),
-      bootstrap: undefined,
-      description: undefined,
-      exportName: undefined,
-      logicalPath: "sandbox/sandbox.mjs",
-      onSession: expect.any(Function),
-      revalidationKey: undefined,
-      sourceHash: "sandbox-source-hash",
-      sourceId: "sandbox/sandbox.mjs",
-      sourceKind: "module",
+      definition: {
+        backend: expect.objectContaining({
+          create: expect.any(Function),
+          name: expect.any(String),
+        }),
+        bootstrap: undefined,
+        description: undefined,
+        exportName: undefined,
+        logicalPath: "sandbox/sandbox.mjs",
+        onSession: expect.any(Function),
+        revalidationKey: undefined,
+        sourceHash: "sandbox-source-hash",
+        sourceId: "sandbox/sandbox.mjs",
+        sourceKind: "module",
+      },
+      kind: "configured",
     });
     expect(resolved.skills).toEqual([
       {
@@ -391,7 +394,7 @@ describe("resolveAgent", () => {
       name: "weather-agent",
     });
     expect(resolved.instructions).toEqual([]);
-    expect(resolved.sandbox).toBeNull();
+    expect(resolved.sandbox).toEqual({ kind: "default" });
     expect(resolved.skills).toEqual([]);
     expect(resolved.tools).toEqual([]);
     expect(resolved.workspaceSpec).toEqual({

@@ -547,8 +547,11 @@ describe("runtime compiled artifact loaders", () => {
       },
     ]);
     expect(researcherNode?.agent.sandbox).toMatchObject({
-      logicalPath: "sandbox/sandbox.mjs",
-      sourceId: "sandbox/sandbox.mjs",
+      definition: {
+        logicalPath: "sandbox/sandbox.mjs",
+        sourceId: "sandbox/sandbox.mjs",
+      },
+      kind: "configured",
     });
     // Authored sandboxes no longer auto-generate model tools — the tool list
     // contains only framework tools and authored tool files.

@@ -56,9 +56,10 @@ export type SandboxRevalidationKeyFn = () => Promise<string> | string;
  * or `agent/sandbox/sandbox.ts` (folder layout, when paired with an
  * authored `sandbox/workspace/` subtree).
  *
- * Each agent (and each subagent) owns exactly one sandbox. When the
- * module file is absent the framework auto-provides a default sandbox
- * via `defaultSandbox()`. Authors override lifecycle and backend by
+ * Each agent (and each subagent) receives a sandbox by default. When the
+ * module file is absent the framework auto-provides that default via
+ * `defaultSandbox()`. Authors may explicitly opt out with `disableSandbox()`
+ * or override lifecycle and backend by
  * creating `agent/sandbox.ts` (or `agent/sandbox/sandbox.ts` when they
  * also want a workspace folder); subagents override independently via
  * `subagents/<name>/sandbox.ts` (or the folder form) and do not inherit

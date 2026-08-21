@@ -9,12 +9,14 @@ import {
   type CompiledDynamicSkillDefinition,
   type CompiledDynamicToolDefinition,
   type CompiledInstructionsDefinition,
+  type CompiledSandboxEntry,
   type CompiledSkillDefinition,
   type CompiledToolDefinition,
   type CompiledWorkflowToolDefinition,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
   createCompiledAgentResources,
+  isDisabledCompiledSandboxEntry,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import type { WebSearchProvider } from "#shared/web-search.js";
@@ -243,6 +245,20 @@ async function compileAgentResources(
   }
 
   const instructions = [...staticInstructions, ...extensionInstructions];
+  const sandbox =
+    manifest.sandbox === null
+      ? null
+      : await compileSandboxDefinition(manifest.agentRoot, manifest.sandbox, {
+          externalDependencies,
+        });
+
+  assertDisabledSandboxCompatibility({
+    agentId: manifest.agentId,
+    dynamicSkillPaths: dynamicSkills.map((skill) => skill.logicalPath),
+    sandbox,
+    sandboxWorkspacePaths: manifest.sandboxWorkspaces.map((workspace) => workspace.logicalPath),
+    skills,
+  });
 
   return createCompiledAgentResources({
     agentRoot: manifest.agentRoot,
@@ -257,12 +273,7 @@ async function compileAgentResources(
     dynamicSkills,
     dynamicTools,
     hooks,
-    sandbox:
-      manifest.sandbox === null
-        ? null
-        : await compileSandboxDefinition(manifest.agentRoot, manifest.sandbox, {
-            externalDependencies,
-          }),
+    sandbox,
     sandboxWorkspaces: manifest.sandboxWorkspaces.map((workspace) => ({
       logicalPath: workspace.logicalPath,
       rootEntries: [...workspace.rootEntries],
@@ -275,6 +286,45 @@ async function compileAgentResources(
     instructions,
     tools,
   });
+}
+
+function assertDisabledSandboxCompatibility(input: {
+  readonly agentId: string;
+  readonly dynamicSkillPaths: readonly string[];
+  readonly sandbox: CompiledSandboxEntry | null;
+  readonly sandboxWorkspacePaths: readonly string[];
+  readonly skills: readonly CompiledSkillDefinition[];
+}): void {
+  if (input.sandbox === null || !isDisabledCompiledSandboxEntry(input.sandbox)) {
+    return;
+  }
+
+  const conflicts = [
+    ...input.sandboxWorkspacePaths.map((path) => `sandbox workspace "${path}"`),
+    ...input.skills
+      .filter(skillUsesSandboxFiles)
+      .map((skill) => `static skill files "${skill.logicalPath}"`),
+    ...input.dynamicSkillPaths.map((path) => `dynamic skill resolver "${path}"`),
+  ];
+  if (conflicts.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Agent "${input.agentId}" exports disableSandbox() from "${input.sandbox.logicalPath}" but also declares sandbox-backed capabilities: ${conflicts.join(", ")}. Remove those capabilities or configure a sandbox for this agent node.`,
+  );
+}
+
+function skillUsesSandboxFiles(skill: CompiledSkillDefinition): boolean {
+  if (skill.files !== undefined && Object.keys(skill.files).length > 0) {
+    return true;
+  }
+  return (
+    skill.sourceKind === "skill-package" &&
+    (skill.assetsPath !== undefined ||
+      skill.referencesPath !== undefined ||
+      skill.scriptsPath !== undefined)
+  );
 }
 
 function compileExtensionMounts(manifest: AgentSourceManifest): CompiledExtensionMount[] {

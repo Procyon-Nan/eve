@@ -19,7 +19,7 @@ The root session receives `agent` by default. The model calls it to delegate a t
 
 The `agentId` field exists only when the agent opts into [agent messaging](#agent-messaging); without the opt-in the schema is `{ message, outputSchema? }`.
 
-The copy uses the root's instructions, connections, auth, and sandbox. It receives the same tools except for the root-only `agent` and `Workflow`, and starts with fresh conversation history and fresh state. Its file writes are immediately visible to the root. To run independent tasks in parallel, emit multiple `agent` calls in one response; eve runs the batch concurrently and returns every result before the root continues. Give parallel children non-overlapping write scopes.
+The copy uses the root's instructions, connections, auth, and sandbox selection. When the root sandbox is enabled, the copy shares it and its file writes are immediately visible to the root. When the root exports `disableSandbox()`, the copy also runs without sandbox access. It receives the same tools except for the root-only `agent` and `Workflow`, and starts with fresh conversation history and fresh state. To run independent tasks in parallel, emit multiple `agent` calls in one response; eve runs the batch concurrently and returns every result before the root continues. Give parallel children non-overlapping write scopes when they share a sandbox.
 
 `agent` is intentionally root-only. Copies created by it cannot call `agent`, and declared subagents never receive the built-in tool. If a stale or forced recursive call reaches execution, eve rejects it instead of starting another child session.
 
@@ -134,7 +134,7 @@ A declared subagent inherits nothing from the root's authored slots. Discovery t
 | Tools        | Inherited except root-only    | Own `tools/`                           |
 | Connections  | Inherited                     | Own `connections/`                     |
 | Skills       | Inherited                     | Own `skills/`                          |
-| Sandbox      | Shared with parent            | Own `sandbox/`, else framework default |
+| Sandbox      | Shares the root selection     | Own `sandbox/`, else framework default |
 | Hooks        | Inherited                     | Own `hooks/`                           |
 | Extensions   | Inherited contributions       | Own `extensions/`                      |
 | State        | Fresh                         | Fresh                                  |
@@ -143,7 +143,7 @@ A declared subagent inherits nothing from the root's authored slots. Discovery t
 
 For a declared subagent this means authoring or mounting anything the child needs. When two subagents need the same procedure, package the skill in a [workspace extension](./extensions#use-an-extension-in-a-workspace) and mount that extension in each subagent. Share typed helpers through `lib/`. The sandbox does not inherit from the parent; it falls back to the framework default unless the subagent authors `subagents/<id>/sandbox.ts` or seeds files via `subagents/<id>/sandbox/workspace/`.
 
-The root built-in `agent` tool is the exception. Its children share the root's sandbox and tools because they are copies of the same agent working on the same files.
+The root built-in `agent` tool is the exception. Its children share the root's sandbox when enabled and use the root's sandbox opt-out when disabled because they are copies of the same agent.
 
 `defineState` is never shared, for either kind. Each child starts with fresh durable state.
 

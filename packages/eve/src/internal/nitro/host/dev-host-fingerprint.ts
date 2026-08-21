@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { isDisabledCompiledSandboxEntry } from "#compiler/manifest.js";
 
 import { readDevelopmentEnvironmentHostValues } from "#cli/dev/environment.js";
 import { computeChannelRouteRegistrations } from "#internal/nitro/host/channel-routes.js";
@@ -33,7 +34,11 @@ export async function computeDevelopmentHostFingerprint(
       sandboxBackends: [
         ...new Set(
           agentNodes
-            .map((node) => node.sandbox?.backendName)
+            .map((node) =>
+              node.sandbox === null || isDisabledCompiledSandboxEntry(node.sandbox)
+                ? undefined
+                : node.sandbox.backendName,
+            )
             .filter((backendName): backendName is string => backendName !== undefined),
         ),
       ].sort((left, right) => left.localeCompare(right)),

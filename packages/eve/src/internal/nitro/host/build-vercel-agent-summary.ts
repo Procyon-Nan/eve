@@ -12,6 +12,7 @@ import type {
   CompiledSubagentNode,
   CompiledToolDefinition,
 } from "#compiler/manifest.js";
+import { isDisabledCompiledSandboxEntry } from "#compiler/manifest.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import {
   type VercelEveAgentSummary,
@@ -66,6 +67,7 @@ export function buildVercelAgentSummary(input: {
         ? null
         : {
             logicalPath: manifest.sandbox.logicalPath,
+            status: isDisabledCompiledSandboxEntry(manifest.sandbox) ? "disabled" : "configured",
           },
     subagents: manifest.subagents.map(toSubagentEntry),
     diagnostics: {

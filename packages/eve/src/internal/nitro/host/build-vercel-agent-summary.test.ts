@@ -10,6 +10,7 @@ import {
   type CompiledToolDefinition,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
+  DISABLED_COMPILED_SANDBOX_KIND,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "#compiler/manifest.js";
 import { buildVercelAgentSummary } from "#internal/nitro/host/build-vercel-agent-summary.js";
@@ -131,6 +132,27 @@ function makeSubagent(name: string): CompiledSubagentNode {
 }
 
 describe("buildVercelAgentSummary", () => {
+  it("reports an explicitly disabled sandbox", () => {
+    const manifest = createCompiledAgentManifest({
+      agentRoot: AGENT_ROOT,
+      appRoot: APP_ROOT,
+      config: {
+        model: { id: "openai/gpt-5.5", routing: { kind: "gateway", target: "openai" } },
+        name: "no-sandbox-agent",
+      },
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+    });
+
+    expect(
+      buildVercelAgentSummary({ manifest, generatorVersion: GENERATOR_VERSION }).sandbox,
+    ).toEqual({ logicalPath: "sandbox.ts", status: "disabled" });
+  });
+
   it("produces the public summary shape from a compiled manifest", () => {
     const subagent = makeSubagent("research");
     const subagentEdge: CompiledSubagentEdge = {

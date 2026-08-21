@@ -88,4 +88,13 @@ describe("framework-tools/index", () => {
       },
     ]);
   });
+
+  it("omits only sandbox-backed default tools when sandbox support is disabled", () => {
+    const names = getFrameworkToolDefinitions({ sandboxEnabled: false }).map((tool) => tool.name);
+
+    expect(names).toEqual(
+      expect.arrayContaining(["ask_question", "load_skill", "todo", "web_fetch", "web_search"]),
+    );
+    expect(names).not.toEqual(expect.arrayContaining(["bash", "read_file", "write_file"]));
+  });
 });

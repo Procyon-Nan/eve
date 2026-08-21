@@ -344,6 +344,27 @@ describe("buildSubagentRunInput", () => {
     });
   });
 
+  it("omits sandbox sharing metadata for self-delegation when sandbox is disabled", () => {
+    const sandboxState = { initialized: false, session: null };
+    const action: RuntimeSubagentCallActionRequest = {
+      ...makeAction(),
+      subagentName: "agent",
+    };
+    const { runInput } = buildRuntimeSubagentRunInput({
+      action,
+      auth: null,
+      batchEvent: { sequence: 0, turnId: "turn-0" },
+      graph: {
+        nodesByNodeId: new Map([[action.nodeId, { sandboxRegistry: { sandbox: null } }]]),
+      },
+      initiatorAuth: null,
+      session: { ...makeSession(), sandboxState },
+    });
+
+    expect(runInput.adapter.state).not.toHaveProperty("parentSandboxState");
+    expect(runInput.adapter.state).not.toHaveProperty("sandboxSessionId");
+  });
+
   it("carries parent sandbox state for declared subagents that opt into sharing", () => {
     const sandboxState = { initialized: true, session: null };
     const session = { ...makeSession(), sandboxState };

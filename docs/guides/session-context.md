@@ -59,7 +59,7 @@ const sandbox = await ctx.getSandbox();
 const result = await sandbox.run({ command: "npm test" });
 ```
 
-The accessor is asynchronous because eve may need to bind or restore the sandbox. A subagent sees its own sandbox, not its parent's. The returned runtime handle can also stop compute while preserving the durable sandbox state. See [Sandbox](../sandbox#using-the-sandbox) for the I/O API and lifecycle.
+The accessor is asynchronous because eve may need to bind or restore the sandbox. A subagent sees its own sandbox unless its definition explicitly selects `parent.sandbox`. The returned runtime handle can also stop compute while preserving the durable sandbox state. If the active agent exports `disableSandbox()`, the accessor throws instead of provisioning a backend. See [Sandbox](../sandbox#using-the-sandbox) for the I/O API and lifecycle.
 
 ## `ctx.getSkill(identifier)`
 

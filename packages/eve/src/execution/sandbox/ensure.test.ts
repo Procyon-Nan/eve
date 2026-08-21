@@ -126,6 +126,17 @@ describe("ensureSandboxAccess", () => {
     mocks.waitForDevelopmentSandboxPrewarm.mockResolvedValue(undefined);
   });
 
+  it("returns null without provisioning a backend when the registry is disabled", async () => {
+    const access = await ensure({ registry: { sandbox: null } });
+
+    expect(await access.get()).toBeNull();
+    expect(await access.captureState()).toEqual({ initialized: false, session: null });
+    expect(mocks.prewarmAppSandboxes).not.toHaveBeenCalled();
+    expect(mocks.waitForDevelopmentSandboxPrewarm).not.toHaveBeenCalled();
+    expect(mocks.waitForSandboxTemplatePrewarmLock).not.toHaveBeenCalled();
+    expect(countActiveSandboxHandles()).toBe(0);
+  });
+
   it("waits for background dev prewarm before creating a templated sandbox", async () => {
     const prewarm = createDeferred<void>();
     mocks.waitForDevelopmentSandboxPrewarm.mockReturnValueOnce(prewarm.promise);
@@ -359,7 +370,7 @@ describe("ensureSandboxAccess", () => {
     };
     const inheritedRegistry: RuntimeSandboxRegistry = {
       sandbox: {
-        ...registry.sandbox,
+        ...registry.sandbox!,
         inheritance: {
           definition: parentDefinition,
           nodeId: "__root__",

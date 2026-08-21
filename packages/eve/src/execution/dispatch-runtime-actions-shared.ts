@@ -249,10 +249,10 @@ function planSharesSandbox(input: {
     const isSelfDelegation =
       action.subagentName === "agent" &&
       !input.bundle.subagentRegistry.subagentsByNodeId.has(action.nodeId);
+    const targetSandbox = graph?.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox;
     return (
-      isSelfDelegation ||
-      graph?.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox.definition.inheritsParent ===
-        true
+      (isSelfDelegation && targetSandbox !== null) ||
+      targetSandbox?.definition.inheritsParent === true
     );
   });
 }

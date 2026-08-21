@@ -39,10 +39,9 @@ export interface EnsureSandboxAccessInput {
  * registry and persisted session state, returning a {@link SandboxAccess}
  * suitable for the runtime context.
  *
- * Every agent has exactly one sandbox. The sandbox carries its own
- * `SandboxBackend` value (resolved from the authored module or
- * substituted with `defaultSandbox()` when omitted), and the runtime
- * simply calls `backend.create(...)`.
+ * Enabled agents carry one `SandboxBackend` value (resolved from the authored
+ * module or substituted with `defaultSandbox()` when omitted). An explicitly
+ * disabled registry returns null without selecting or calling a backend.
  */
 export async function ensureSandboxAccess(input: EnsureSandboxAccessInput): Promise<SandboxAccess> {
   let initialized = input.state?.initialized ?? false;

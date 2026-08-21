@@ -150,6 +150,15 @@ export type ResolvedSandboxDefinition = ResolvedModuleSourceRef & {
 };
 
 /**
+ * Runtime sandbox choice for one agent node. An absent authored module uses
+ * the framework default; an explicit opt-out remains distinct from both.
+ */
+export type ResolvedSandboxSelection =
+  | { readonly kind: "default" }
+  | { readonly kind: "configured"; readonly definition: ResolvedSandboxDefinition }
+  | { readonly kind: "disabled"; readonly source: ResolvedModuleSourceRef };
+
+/**
  * Runtime-owned tool definition resolved from a compiled module map or
  * declared by the framework catalog.
  * A tool without `execute` is surfaced to the client and never executed by eve.
@@ -440,11 +449,8 @@ export interface ResolvedAgent {
    * declare one.
    */
   readonly instructions: readonly ResolvedInstructionsDefinition[];
-  /**
-   * Authored sandbox override for this agent, when one exists. `null`
-   * means the agent uses the framework default sandbox unchanged.
-   */
-  readonly sandbox: ResolvedSandboxDefinition | null;
+  /** Sandbox choice resolved independently for this agent graph node. */
+  readonly sandbox: ResolvedSandboxSelection;
   /**
    * Byte-free descriptor for the compiled workspace resource tree owned
    * by this agent's graph node. The prewarm orchestrator resolves the

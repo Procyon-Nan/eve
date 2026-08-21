@@ -27,6 +27,89 @@ import {
  */
 
 describe("stageAttachmentsToSandbox (integration)", () => {
+  it("passes inline image, PDF, URL, and byte FileParts through unchanged when sandbox is disabled", async () => {
+    const runtime = createTestRuntime();
+    const get = vi.fn(async () => null);
+    const content: UserContent = [
+      { type: "text", text: "inspect these files" },
+      {
+        data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        filename: "image.png",
+        mediaType: "image/png",
+        type: "file",
+      },
+      {
+        data: `data:application/pdf;base64,${Buffer.from("%PDF-1.7").toString("base64")}`,
+        filename: "document.pdf",
+        mediaType: "application/pdf",
+        type: "file",
+      },
+      {
+        data: new URL("https://example.com/image.webp"),
+        filename: "remote.webp",
+        mediaType: "image/webp",
+        type: "file",
+      },
+      {
+        data: new Uint8Array([1, 2, 3]),
+        filename: "bytes.jpg",
+        mediaType: "image/jpeg",
+        type: "file",
+      },
+    ];
+
+    const staged = await runtime.runAsSession(
+      {
+        sandboxAccess: {
+          captureState: async () => ({ initialized: false, session: null }),
+          get,
+          stop: async () => {},
+        },
+      },
+      async () => await stageAttachmentsToSandbox(content),
+    );
+
+    expect(staged).toBe(content);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(
+      (staged as Exclude<UserContent, string>).some(
+        (part) => part.type === "file" && isSandboxRefUrl(part.data),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails clearly for a historical eve-sandbox attachment when sandbox is disabled", async () => {
+    const runtime = createTestRuntime();
+    const messages = [
+      {
+        content: [
+          {
+            data: new URL(
+              "eve-sandbox:?path=%2Fworkspace%2Fattachments%2Fold%2Fimage.png&size=4&type=image%2Fpng",
+            ),
+            filename: "/workspace/attachments/old/image.png",
+            mediaType: "image/png",
+            type: "file" as const,
+          },
+        ],
+        role: "user" as const,
+      },
+    ];
+
+    await expect(
+      runtime.runAsSession(
+        {
+          sandboxAccess: {
+            captureState: async () => ({ initialized: false, session: null }),
+            get: async () => null,
+            stop: async () => {},
+          },
+        },
+        async () => await hydrateSandboxAttachments(messages),
+      ),
+    ).rejects.toThrow(/historical eve-sandbox: attachments.*explicitly disabled/s);
+  });
+
   it("writes FilePart bytes into the active sandbox and rewrites data to an eve-sandbox: ref", async () => {
     const sandbox = mockSandbox({ id: "sbx_integration" });
     const runtime = createTestRuntime();

@@ -89,9 +89,8 @@ export type ScheduleSourceRef = MarkdownSourceRef<ScheduleDefinition> | ModuleSo
 /**
  * Sandbox source reference preserved by the discovery manifest.
  *
- * Every agent owns exactly one sandbox; the source ref is just a
- * module reference identifying the authored `sandbox.<ext>` (or
- * `sandbox/sandbox.<ext>`) override.
+ * Every agent receives a sandbox by default; the source ref identifies an
+ * authored `sandbox.<ext>` (or `sandbox/sandbox.<ext>`) override or opt-out.
  */
 export type SandboxSourceRef = ModuleSourceRef;
 

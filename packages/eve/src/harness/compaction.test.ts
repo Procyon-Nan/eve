@@ -8,7 +8,8 @@ import {
   resolveCompactionModel,
   shouldCompact,
 } from "#harness/compaction.js";
-import { estimateTokens } from "#harness/token-estimate.js";
+import { AGENTS_SNIPPET_LABEL } from "#harness/handles/prompt.js";
+import { estimateModelMessageTokens, estimateTokens } from "#harness/token-estimate.js";
 import type { CompactionConfig } from "#harness/types.js";
 
 vi.mock("ai", () => ({
@@ -152,6 +153,32 @@ describe("getInputTokenCount", () => {
     // The assistant message is ~80 content chars plus JSON struct overhead.
     expect(result).toBeGreaterThan(42 + 20);
     expect(result).toBeLessThan(42 + 40);
+  });
+
+  it("adds a bounded file reserve after the last exact prompt count", () => {
+    const messages: ModelMessage[] = [
+      { content: "previous prompt", role: "user" },
+      {
+        content: [
+          {
+            data: Buffer.alloc(2_927_949),
+            filename: "image.png",
+            mediaType: "image/png",
+            type: "file",
+          },
+        ],
+        role: "user",
+      },
+    ];
+
+    const result = getInputTokenCount(messages, {
+      ...config,
+      lastKnownInputTokens: 42,
+      lastKnownPromptMessageCount: 1,
+    });
+
+    expect(result).toBeGreaterThan(42 + 2_800);
+    expect(result).toBeLessThan(42 + 4_000);
   });
 });
 
@@ -322,7 +349,11 @@ function checkpointHead(text: string): ModelMessage[] {
   return [user(CHECKPOINT_MARKER), assistant(text)];
 }
 
-function expectWellFormedCompaction(result: ModelMessage[], threshold: number): void {
+function expectWellFormedCompaction(
+  result: ModelMessage[],
+  threshold: number,
+  allowOversizedResult: boolean,
+): void {
   const seenCallIds = new Set<string>();
   for (const message of result) {
     if (typeof message.content === "string") continue;
@@ -336,14 +367,17 @@ function expectWellFormedCompaction(result: ModelMessage[], threshold: number): 
 
   expect(result.at(-1)?.role, "history must not trail on assistant content").not.toBe("assistant");
 
-  if (result.length > 2) {
-    expect(estimateTokens(result)).toBeLessThanOrEqual(threshold);
+  if (result.length > 2 && !allowOversizedResult) {
+    expect(estimateModelMessageTokens(result)).toBeLessThanOrEqual(threshold);
   }
 }
 
 async function compact(
   messages: ModelMessage[],
-  overrides: Partial<CompactionConfig> & { readonly summary?: string } = {},
+  overrides: Partial<CompactionConfig> & {
+    readonly allowOversizedResult?: boolean;
+    readonly summary?: string;
+  } = {},
 ): Promise<{ result: ModelMessage[]; summarizer: ReturnType<typeof vi.mocked<never>> }> {
   const { generateText } = await import("ai");
   const summarizer = vi.mocked(generateText);
@@ -361,7 +395,11 @@ async function compact(
     compactionConfig,
   );
 
-  expectWellFormedCompaction(result, compactionConfig.threshold);
+  expectWellFormedCompaction(
+    result,
+    compactionConfig.threshold,
+    overrides.allowOversizedResult === true,
+  );
   return { result, summarizer: summarizer as ReturnType<typeof vi.mocked<never>> };
 }
 
@@ -571,6 +609,167 @@ describe("compactMessages: forced summary", () => {
   });
 });
 
+describe("compactMessages: active multimodal turn protection", () => {
+  const imageBytes = Buffer.from("active image bytes");
+  const multimodalUser: ModelMessage = {
+    content: [
+      { text: "What is in this image?", type: "text" },
+      {
+        data: imageBytes,
+        filename: "scene.png",
+        mediaType: "image/png",
+        type: "file",
+      },
+    ],
+    role: "user",
+  };
+
+  it("does not invoke the summarizer for a new multimodal-only conversation", async () => {
+    const { result, summarizer } = await compact([multimodalUser], {
+      threshold: HEURISTICS_FORBIDDEN,
+    });
+
+    expect(summarizer).not.toHaveBeenCalled();
+    expect(result).toEqual([multimodalUser]);
+    expect(result[0]?.content).toBe(multimodalUser.content);
+  });
+
+  it("summarizes old history while preserving the current multimodal message", async () => {
+    const messages = [
+      user("old investigation ".repeat(2_000)),
+      assistant("old result"),
+      multimodalUser,
+    ];
+
+    const { result, summarizer } = await compact(messages, {
+      allowOversizedResult: true,
+      threshold: HEURISTICS_FORBIDDEN,
+    });
+
+    expect(summarizer).toHaveBeenCalledTimes(1);
+    expect(summarizer.mock.calls[0]?.[0]?.prompt).toContain("old investigation");
+    expect(result.at(-1)).toEqual(multimodalUser);
+    expect(result.at(-1)?.content).toBe(multimodalUser.content);
+  });
+
+  it("keeps the active tool call and file result paired and byte-identical", async () => {
+    const toolCall: ModelMessage = {
+      content: [{ input: {}, toolCallId: "call-image", toolName: "render", type: "tool-call" }],
+      role: "assistant",
+    };
+    const toolResult: ModelMessage = {
+      content: [
+        {
+          output: {
+            type: "content",
+            value: [
+              {
+                data: { data: imageBytes.toString("base64"), type: "data" },
+                filename: "render.png",
+                mediaType: "image/png",
+                type: "file",
+              },
+            ],
+          },
+          toolCallId: "call-image",
+          toolName: "render",
+          type: "tool-result",
+        },
+      ],
+      role: "tool",
+    };
+    const messages = [multimodalUser, toolCall, toolResult];
+
+    const { result, summarizer } = await compact(messages, {
+      allowOversizedResult: true,
+      threshold: HEURISTICS_FORBIDDEN,
+    });
+
+    expect(summarizer).not.toHaveBeenCalled();
+    expect(result).toEqual(messages);
+    expect(result[2]?.content).toBe(toolResult.content);
+  });
+
+  it("recognizes multipart user input behind framework-generated resumption messages", async () => {
+    const messages = [
+      user("old question"),
+      assistant("old answer"),
+      multimodalUser,
+      user("Continue."),
+    ];
+
+    const { result, summarizer } = await compact(messages, {
+      allowOversizedResult: true,
+      threshold: HEURISTICS_FORBIDDEN,
+    });
+
+    expect(summarizer).toHaveBeenCalledTimes(1);
+    expect(result.slice(-2)).toEqual([multimodalUser, user("Continue.")]);
+  });
+
+  it("keeps the active turn ahead of framework-generated agent state", async () => {
+    const toolCall: ModelMessage = {
+      content: [{ input: {}, toolCallId: "call-agent", toolName: "research", type: "tool-call" }],
+      role: "assistant",
+    };
+    const toolResult: ModelMessage = {
+      content: [
+        {
+          output: { type: "text", value: "child answered" },
+          toolCallId: "call-agent",
+          toolName: "research",
+          type: "tool-result",
+        },
+      ],
+      role: "tool",
+    };
+    const activeTurn = [
+      multimodalUser,
+      toolCall,
+      toolResult,
+      user(`${AGENTS_SNIPPET_LABEL}\n<agents></agents>`),
+    ];
+    const messages = [
+      user("old investigation ".repeat(2_000)),
+      assistant("old result"),
+      ...activeTurn,
+    ];
+
+    const { result, summarizer } = await compact(messages, {
+      allowOversizedResult: true,
+      threshold: HEURISTICS_FORBIDDEN,
+    });
+
+    expect(summarizer).toHaveBeenCalledTimes(1);
+    expect(result.slice(-activeTurn.length)).toEqual(activeTurn);
+    expect(result.at(-4)?.content).toBe(multimodalUser.content);
+  });
+
+  it("renders completed-turn files as placeholders in the compaction prompt", async () => {
+    const oldBase64 = Buffer.from("completed attachment").toString("base64");
+    const oldFileMessage: ModelMessage = {
+      content: [
+        {
+          data: oldBase64,
+          filename: "old.png",
+          mediaType: "image/png",
+          type: "file",
+        },
+      ],
+      role: "user",
+    };
+
+    const { summarizer } = await compact(
+      [oldFileMessage, assistant("I inspected it."), user("new question")],
+      { threshold: HEURISTICS_FORBIDDEN },
+    );
+
+    const prompt = String(summarizer.mock.calls[0]?.[0]?.prompt);
+    expect(prompt).toContain("Attached file old.png (image/png)");
+    expect(prompt).not.toContain(oldBase64);
+  });
+});
+
 describe("compactMessages: summarization fallback", () => {
   it("summarizes when capping cannot free enough space", async () => {
     // All bulk is conversational prose — capping removes nothing — and the
@@ -615,7 +814,8 @@ describe("compactMessages: summarization fallback", () => {
     // Prose bulk forces summarization; the threshold has room for the tail.
     const oldProse = user("investigation notes ".repeat(2_000));
     const [recentCall, recentResult] = toolExchange({ callId: "call-1", payloadChars: 100 });
-    const messages = [oldProse, assistant("done reading"), recentCall, recentResult];
+    const currentUser = user("continue the investigation");
+    const messages = [oldProse, assistant("done reading"), currentUser, recentCall, recentResult];
 
     const { result, summarizer } = await compact(messages, {
       recentWindowSize: 2,
@@ -623,18 +823,19 @@ describe("compactMessages: summarization fallback", () => {
     });
 
     expect(summarizer).toHaveBeenCalledTimes(1);
-    expect(result.slice(2, 4)).toEqual([recentCall, recentResult]);
+    expect(result.slice(-3)).toEqual([currentUser, recentCall, recentResult]);
   });
 
-  it("strips tool activity from the tail when verbatim does not fit but text does", async () => {
+  it("strips only completed-turn tool activity when verbatim does not fit", async () => {
     const oldProse = user("investigation notes ".repeat(2_000));
     const [recentCall, recentResult] = toolExchange({
       callId: "call-1",
       payloadChars: 1_400,
       prose: "Running the tool.",
     });
-    const tail = [user("do the thing"), recentCall, recentResult];
-    const messages = [oldProse, ...tail];
+    const completedTail = [user("do the thing"), recentCall, recentResult];
+    const currentUser = user("now summarize the findings");
+    const messages = [oldProse, ...completedTail, currentUser];
 
     // Derive a threshold between the stripped and verbatim tail sizes so the
     // regime is explicit rather than encoded in magic numbers. The summary is
@@ -642,11 +843,16 @@ describe("compactMessages: summarization fallback", () => {
     // verbatim tail overshoot after the summary head is added.
     const summary = "s".repeat(2_400);
     const summaryHead = [user(CHECKPOINT_MARKER), assistant(summary)];
-    const verbatimSize = estimateTokens([...summaryHead, ...tail]);
+    const verbatimSize = estimateModelMessageTokens([
+      ...summaryHead,
+      ...completedTail,
+      currentUser,
+    ]);
     const strippedSize = estimateTokens([
       ...summaryHead,
       user("do the thing"),
       assistant("Running the tool."),
+      currentUser,
     ]);
     const threshold = Math.floor((verbatimSize + strippedSize) / 2);
     expect(strippedSize).toBeLessThan(threshold);
@@ -662,40 +868,39 @@ describe("compactMessages: summarization fallback", () => {
     expect(result).toContainEqual(user("do the thing"));
     expect(result).toContainEqual(assistant("Running the tool."));
     expect(result.some((m) => m.role === "tool")).toBe(false);
+    expect(result.at(-1)).toEqual(currentUser);
   });
 
-  it("folds everything into the summary when even the stripped tail cannot fit", async () => {
+  it("returns an oversized active turn unchanged instead of summarizing it", async () => {
     const [call, resultMsg] = toolExchange({ callId: "call-1", payloadChars: 2_000 });
     const messages = [user("Find the relevant rows."), call, resultMsg];
 
     const { result } = await compact(messages, {
+      allowOversizedResult: true,
       recentWindowSize: 10,
       summary: "Summary of the large SQL result",
       threshold: HEURISTICS_FORBIDDEN,
     });
 
-    // The folded-away user prompt is replayed as the live turn, so the model
-    // resumes against its actual instruction rather than a bare "Continue.".
-    expect(result).toEqual([
-      user(CHECKPOINT_MARKER),
-      assistant("Summary of the large SQL result"),
-      user("Find the relevant rows."),
-    ]);
+    expect(result).toEqual(messages);
   });
 
-  it("replays the folded-away user prompt when the tail would trail on assistant content", async () => {
+  it("preserves the active turn and appends a resumption guard after assistant content", async () => {
     const messages = [
       user("please fix the flaky test"),
       assistant("working on it"),
       assistant("still going"),
     ];
 
-    const { result } = await compact(messages, {
+    const { result, summarizer } = await compact(messages, {
+      allowOversizedResult: true,
       recentWindowSize: 1,
       threshold: HEURISTICS_FORBIDDEN,
     });
 
-    expect(result.at(-1)).toEqual(user("please fix the flaky test"));
+    expect(summarizer).not.toHaveBeenCalled();
+    expect(result.slice(0, messages.length)).toEqual(messages);
+    expect(result.at(-1)).toEqual(user("Continue."));
   });
 
   it("falls back to a synthetic resumption when the real user prompt survives in the tail", async () => {

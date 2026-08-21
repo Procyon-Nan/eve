@@ -332,6 +332,7 @@ async function loadGraphFromArtifacts(input: {
 function collectNodeSandboxes(graph: ResolvedAgentGraphBundle): readonly NodeSandbox[] {
   return [...graph.nodesByNodeId.entries()].flatMap(([nodeId, node]) => {
     const registered = node.sandboxRegistry.sandbox;
+    if (registered === null) return [];
     return registered.definition.inheritsParent === true ? [] : [{ ...registered, nodeId }];
   });
 }

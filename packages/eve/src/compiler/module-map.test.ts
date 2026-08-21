@@ -4,6 +4,7 @@ import type { CompiledAgentManifest } from "./manifest.js";
 import {
   COMPILED_AGENT_MANIFEST_VERSION,
   createCompiledAgentResources,
+  DISABLED_COMPILED_SANDBOX_KIND,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "./manifest.js";
 import { collectModuleRefsForManifest, createCompiledModuleMapSource } from "./module-map.js";
@@ -118,6 +119,20 @@ describe("createCompiledModuleMapSource", () => {
 });
 
 describe("collectModuleRefsForManifest", () => {
+  it("does not load an explicit disabled sandbox marker at runtime", () => {
+    const refs = collectModuleRefsForManifest({
+      ...createManifestWithTool("/agent"),
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+    });
+
+    expect(refs.some((ref) => ref.sourceId === "sandbox.ts")).toBe(false);
+  });
+
   it("includes module-sourced schedules with run() so the dispatcher can load the handler", () => {
     const manifest = createManifestWithTool("/agent");
     const manifestWithSchedule: CompiledAgentManifest = {

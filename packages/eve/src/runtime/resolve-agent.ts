@@ -3,6 +3,7 @@ import type {
   CompiledAgentResources,
   CompiledInstructionsDefinition,
 } from "#compiler/manifest.js";
+import { isDisabledCompiledSandboxEntry } from "#compiler/manifest.js";
 import type { CompiledModuleMap } from "#compiler/module-map.js";
 import { resolveChannelDefinition } from "#runtime/resolve-channel.js";
 
@@ -96,10 +97,22 @@ export async function resolveAgent(input: ResolveAgentInput): Promise<ResolvedAg
       resolveConnectionDefinition(connectionDefinition, input.moduleMap, input.nodeId),
     ),
   );
-  const authoredSandbox =
+  const sandbox: ResolvedAgent["sandbox"] =
     input.manifest.sandbox === null
-      ? null
-      : await resolveSandboxDefinition(input.manifest.sandbox, input.moduleMap, input.nodeId);
+      ? { kind: "default" }
+      : isDisabledCompiledSandboxEntry(input.manifest.sandbox)
+        ? {
+            kind: "disabled",
+            source: createResolvedModuleSourceRef(input.manifest.sandbox),
+          }
+        : {
+            definition: await resolveSandboxDefinition(
+              input.manifest.sandbox,
+              input.moduleMap,
+              input.nodeId,
+            ),
+            kind: "configured",
+          };
   const instructions = input.manifest.instructions.map(createResolvedInstructionsDefinition);
   const workspaceResourceRoot = input.manifest.workspaceResourceRoot;
   const resolvedAgent: ResolvedAgent = {
@@ -122,7 +135,7 @@ export async function resolveAgent(input: ResolveAgentInput): Promise<ResolvedAg
       appRoot: input.manifest.appRoot,
       diagnosticsSummary: input.manifest.diagnosticsSummary,
     },
-    sandbox: authoredSandbox,
+    sandbox,
     workspaceResourceRoot,
     skills: resolvedSkills,
     tools: resolvedTools,

@@ -33,7 +33,10 @@ export function buildCallbackContext(): SessionContext {
       }
       return access.get().then((sandbox) => {
         if (sandbox === null) {
-          throw new Error("The sandbox is not available in the current authored runtime context.");
+          throw new Error(
+            "This agent has explicitly disabled sandbox access with disableSandbox(). " +
+              "Configure a sandbox for this agent node before calling ctx.getSandbox().",
+          );
         }
         return withRuntimeSandboxStop(sandbox, async () => await access.stop());
       });

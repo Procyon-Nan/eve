@@ -139,9 +139,10 @@ export function buildSubagentRunInput(input: {
     parentSessionId: session.sessionId,
     subagentName: action.subagentName,
   };
+  const targetSandbox = input.graph?.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox;
   const sharesSandbox =
-    input.graph?.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox?.definition
-      .inheritsParent === true || action.subagentName === "agent";
+    targetSandbox?.definition.inheritsParent === true ||
+    (action.subagentName === "agent" && targetSandbox !== null);
   if (sharesSandbox) {
     if (session.sandboxState !== undefined) {
       adapterState.parentSandboxState = session.sandboxState;

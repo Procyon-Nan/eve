@@ -15,7 +15,7 @@ describe("createRuntimeSandboxRegistry", () => {
   it("allows an empty child to inherit its parent sandbox", () => {
     expect(
       createRuntimeSandboxRegistry({
-        authoredSandbox: inheritedDefinition,
+        selection: { definition: inheritedDefinition, kind: "configured" },
         workspaceResourceRoot: { logicalPath: "", rootEntries: [] },
       }),
     ).toMatchObject({
@@ -26,7 +26,7 @@ describe("createRuntimeSandboxRegistry", () => {
   it("rejects child workspace resources when inheriting the parent sandbox", () => {
     expect(() =>
       createRuntimeSandboxRegistry({
-        authoredSandbox: inheritedDefinition,
+        selection: { definition: inheritedDefinition, kind: "configured" },
         workspaceResourceRoot: {
           contentHash: "child-content",
           logicalPath: "workspace-resources/foo",

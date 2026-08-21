@@ -74,8 +74,9 @@ const tool = entry.extend({
 
 const frameworkTool = tool.extend({
   disabledByAuthor: z.boolean(),
+  disabledBySandbox: z.boolean().optional(),
   replacedByAuthoredTool: z.boolean(),
-  status: z.enum(["active", "disabled", "opt-in", "replaced"]),
+  status: z.enum(["active", "disabled", "opt-in", "replaced", "unavailable"]),
 });
 
 const dynamicResolver = source.extend({
@@ -147,14 +148,21 @@ const hook = source.extend({
   slug: z.string(),
 });
 
-const sandbox = source.extend({
+const configuredSandbox = source.extend({
   backendKind: z.string().optional(),
   description: z.string().optional(),
   hasBootstrap: z.boolean(),
   hasOnSession: z.boolean(),
   revalidationKey: z.string().optional(),
   sourceHash: z.string().optional(),
+  status: z.literal("configured").default("configured"),
 });
+
+const disabledSandbox = source.extend({
+  status: z.literal("disabled"),
+});
+
+const sandbox = z.union([configuredSandbox, disabledSandbox]);
 
 /** Runtime contract for the complete `/eve/v1/info` response. */
 export const AgentInfoResultSchema = z.object({

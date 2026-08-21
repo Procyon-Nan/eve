@@ -145,6 +145,7 @@ async function resolveRuntimeAgentNode(
   });
   const frameworkTools = getFrameworkToolDefinitions({
     authoredSkills: agent.skills,
+    sandboxEnabled: agent.sandbox.kind !== "disabled",
   });
   const frameworkToolNames = new Set(frameworkTools.map((t) => t.name));
   const allFrameworkToolNames = getAllFrameworkToolNames();
@@ -218,7 +219,7 @@ async function resolveRuntimeAgentNode(
   ];
 
   const sandboxRegistry = createRuntimeSandboxRegistry({
-    authoredSandbox: agent.sandbox,
+    selection: agent.sandbox,
     workspaceResourceRoot: agent.workspaceResourceRoot,
   });
   const subagentRegistry = createRuntimeSubagentRegistry({
@@ -474,10 +475,11 @@ function attachInheritedSandboxWorkspaceResources(input: {
   );
 
   for (const [nodeId, node] of input.nodesByNodeId) {
-    if (node.sandboxRegistry.sandbox.definition.inheritsParent !== true) continue;
+    const registered = node.sandboxRegistry.sandbox;
+    if (registered?.definition.inheritsParent !== true) continue;
     if (node.agent.dynamicSkillResolvers.length > 0) {
       throw new ResolveRuntimeAgentGraphError(
-        `Sandbox "${node.sandboxRegistry.sandbox.definition.logicalPath}" selects parent.sandbox but agent node "${nodeId}" defines dynamic skills. Remove the child dynamic skills or give the child its own sandbox.`,
+        `Sandbox "${registered.definition.logicalPath}" selects parent.sandbox but agent node "${nodeId}" defines dynamic skills. Remove the child dynamic skills or give the child its own sandbox.`,
         { nodeId },
       );
     }
@@ -485,7 +487,7 @@ function attachInheritedSandboxWorkspaceResources(input: {
     const parentNodeId = parentNodeIdByChildNodeId.get(nodeId);
     if (parentNodeId === undefined) {
       throw new ResolveRuntimeAgentGraphError(
-        `Sandbox "${node.sandboxRegistry.sandbox.definition.logicalPath}" selects parent.sandbox but agent node "${nodeId}" has no parent.`,
+        `Sandbox "${registered.definition.logicalPath}" selects parent.sandbox but agent node "${nodeId}" has no parent.`,
         { nodeId },
       );
     }
@@ -494,10 +496,17 @@ function attachInheritedSandboxWorkspaceResources(input: {
       nodesByNodeId: input.nodesByNodeId,
       parentNodeIdByChildNodeId,
     });
-    (node.sandboxRegistry.sandbox as { inheritance?: unknown }).inheritance = {
-      definition: owner.sandboxRegistry.sandbox.definition,
+    const ownerSandbox = owner.sandboxRegistry.sandbox;
+    if (ownerSandbox === null) {
+      throw new ResolveRuntimeAgentGraphError(
+        `Sandbox "${registered.definition.logicalPath}" selects parent.sandbox but its resolved parent explicitly disables sandbox access. Configure a sandbox on an ancestor or give agent node "${nodeId}" its own sandbox.`,
+        { nodeId },
+      );
+    }
+    (registered as { inheritance?: unknown }).inheritance = {
+      definition: ownerSandbox.definition,
       nodeId: owner.nodeId,
-      workspaceResourceRoot: owner.sandboxRegistry.sandbox.workspaceResourceRoot,
+      workspaceResourceRoot: ownerSandbox.workspaceResourceRoot,
     };
     const workspacePrompt = createWorkspacePromptSection(owner.agent.workspaceSpec);
     if (workspacePrompt !== undefined) {
@@ -520,7 +529,7 @@ function resolveSandboxOwnerNode(input: {
       nodeId: input.nodeId,
     });
   }
-  if (node.sandboxRegistry.sandbox.definition.inheritsParent !== true) return node;
+  if (node.sandboxRegistry.sandbox?.definition.inheritsParent !== true) return node;
 
   const parentNodeId = input.parentNodeIdByChildNodeId.get(input.nodeId);
   if (parentNodeId === undefined) {

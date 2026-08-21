@@ -1,6 +1,6 @@
 import type { CompiledWorkspaceResourceRoot } from "#compiler/manifest.js";
 import { defaultSandbox } from "#public/sandbox/backends/default.js";
-import type { ResolvedSandboxDefinition } from "#runtime/types.js";
+import type { ResolvedSandboxDefinition, ResolvedSandboxSelection } from "#runtime/types.js";
 
 /**
  * Stable internal source id for the framework-owned default sandbox.
@@ -39,14 +39,12 @@ export interface RuntimeRegisteredSandbox {
  * Runtime-owned registry that exposes the resolved sandbox to the harness
  * startup path.
  *
- * Every agent owns exactly one sandbox, so the registry is just a
- * single record. When the author provides a `sandbox.<ext>` (or
- * `sandbox/sandbox.<ext>`) override, that authored definition replaces
- * the framework default. Production always populates it; tests that
- * need a `null` sandbox cast through `as RuntimeSandboxRegistry`.
+ * The record is `null` only when the agent explicitly exports
+ * `disableSandbox()`. An absent authored module still registers the framework
+ * default sandbox.
  */
 export interface RuntimeSandboxRegistry {
-  readonly sandbox: RuntimeRegisteredSandbox;
+  readonly sandbox: RuntimeRegisteredSandbox | null;
 }
 
 /**
@@ -55,10 +53,17 @@ export interface RuntimeSandboxRegistry {
  * framework default.
  */
 export function createRuntimeSandboxRegistry(input: {
-  readonly authoredSandbox: ResolvedSandboxDefinition | null;
+  readonly selection: ResolvedSandboxSelection;
   readonly workspaceResourceRoot: CompiledWorkspaceResourceRoot;
 }): RuntimeSandboxRegistry {
-  const definition = input.authoredSandbox ?? createFrameworkSandboxDefinition();
+  if (input.selection.kind === "disabled") {
+    return { sandbox: null };
+  }
+
+  const definition =
+    input.selection.kind === "configured"
+      ? input.selection.definition
+      : createFrameworkSandboxDefinition();
   if (
     definition.inheritsParent === true &&
     (input.workspaceResourceRoot.contentHash !== undefined ||

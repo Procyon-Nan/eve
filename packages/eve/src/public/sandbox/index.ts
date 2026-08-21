@@ -4,6 +4,8 @@
  */
 export {
   defineSandbox,
+  disableSandbox,
+  type DisabledSandboxSentinel,
   type SandboxAncestorReference,
   type SandboxBootstrapContext,
   type SandboxBootstrapUseFn,

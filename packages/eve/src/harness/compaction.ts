@@ -9,7 +9,9 @@ import {
   TODO_COMPACTION_PRESERVATION_LABEL,
   TRANSCRIPT_PAYLOAD_LIMIT,
 } from "#harness/compaction-prompt.js";
-import { estimateTokens } from "#harness/token-estimate.js";
+import { AGENTS_SNIPPET_LABEL } from "#harness/handles/prompt.js";
+import { isPendingApprovalsSnippet } from "#harness/hitl/approval-prompt.js";
+import { estimateModelMessageTokens, estimateTokens } from "#harness/token-estimate.js";
 import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
 import type { CompactionConfig, ToolLoopHarnessConfig } from "#harness/types.js";
 
@@ -47,10 +49,10 @@ export function getInputTokenCount(
     priorCount < 0 ||
     priorCount > messages.length
   ) {
-    return estimateTokens(messages);
+    return estimateModelMessageTokens(messages);
   }
 
-  return prior + estimateTokens(messages.slice(priorCount));
+  return prior + estimateModelMessageTokens(messages.slice(priorCount));
 }
 
 /**
@@ -163,7 +165,7 @@ function evaluateThreshold(
   ruler: "estimate" | "should-compact",
 ): { readonly estimatedTokens: number; readonly type: "over-limit" | "within-limit" } {
   const overhead = ruler === "should-compact" ? COMPACTION_PROMPT_OVERHEAD_TOKENS : 0;
-  const estimatedTokens = estimateTokens(messages) + overhead;
+  const estimatedTokens = estimateModelMessageTokens(messages) + overhead;
   return {
     estimatedTokens,
     type: estimatedTokens <= config.threshold ? "within-limit" : "over-limit",
@@ -187,17 +189,31 @@ export async function compactMessages(
   forceSummary = false,
 ): Promise<ModelMessage[]> {
   const { conversation, previousCheckpoint } = extractPreviousCheckpoint(messages);
+  const activeTurnStart = forceSummary ? -1 : findLastRealUserMessageIndex(conversation);
+  const compressibleConversation =
+    activeTurnStart === -1 ? conversation : conversation.slice(0, activeTurnStart);
+  const activeTurn = activeTurnStart === -1 ? [] : conversation.slice(activeTurnStart);
   const recentConfig = forceSummary ? { ...config, recentWindowSize: 1 } : config;
-  let keep = selectRecentWindowSize(conversation, recentConfig);
+  let keep = selectRecentWindowSize(compressibleConversation, activeTurn, recentConfig);
 
   if (!forceSummary) {
-    const { older, recent } = splitMessagesForCompaction(conversation, keep);
+    if (compressibleConversation.length === 0 && previousCheckpoint === undefined) {
+      return withResumptionGuard([...messages], conversation);
+    }
+
+    const { older, recent } = splitMessagesForCompaction(compressibleConversation, keep);
     if (older.length === 0 && previousCheckpoint === undefined) {
-      return keepNonToolResultMessages(recent);
+      return [...recent, ...activeTurn];
     }
 
     for (const heuristic of COMPACTION_HEURISTICS) {
-      const outcome = heuristic({ config, conversation, older, previousCheckpoint, recent });
+      const outcome = heuristic({
+        config,
+        conversation,
+        older,
+        previousCheckpoint,
+        recent: [...recent, ...activeTurn],
+      });
       if (outcome.type === "within-limit") {
         return outcome.messages;
       }
@@ -205,7 +221,7 @@ export async function compactMessages(
   }
 
   while (true) {
-    const { older, recent } = splitMessagesForCompaction(conversation, keep);
+    const { older, recent } = splitMessagesForCompaction(compressibleConversation, keep);
 
     const summaryPrompt = createCompactionPrompt({
       messages: older,
@@ -232,13 +248,13 @@ export async function compactMessages(
     // Prefer keeping the recent tail verbatim — surviving tool results are the
     // model's evidence that work already ran. Degrade to text-only, then to a
     // smaller window, only under threshold pressure.
-    const verbatim = withResumptionGuard([...summaryHead, ...recent], conversation);
+    const verbatim = withResumptionGuard([...summaryHead, ...recent, ...activeTurn], conversation);
     if (evaluateThreshold(verbatim, config, "estimate").type === "within-limit") {
       return verbatim;
     }
 
     const stripped = withResumptionGuard(
-      [...summaryHead, ...keepNonToolResultMessages(recent)],
+      [...summaryHead, ...keepNonToolResultMessages(recent), ...activeTurn],
       conversation,
     );
     if (evaluateThreshold(stripped, config, "estimate").type === "within-limit" || keep === 0) {
@@ -335,22 +351,35 @@ function withResumptionGuard(
  * messages are all `role: "user"` but carry no user intent).
  */
 function findLastRealUserMessage(conversation: readonly ModelMessage[]): ModelMessage | undefined {
+  const index = findLastRealUserMessageIndex(conversation);
+  return index === -1 ? undefined : conversation[index];
+}
+
+function findLastRealUserMessageIndex(conversation: readonly ModelMessage[]): number {
   for (let index = conversation.length - 1; index >= 0; index -= 1) {
     const message = conversation[index];
-    if (message?.role !== "user" || typeof message.content !== "string") {
+    if (message?.role !== "user") {
+      continue;
+    }
+    if (typeof message.content !== "string") {
+      if (message.content.length > 0) {
+        return index;
+      }
       continue;
     }
     if (
       message.content === COMPACTION_RESUMPTION_MESSAGE ||
       message.content === COMPACTION_CHECKPOINT_MARKER ||
-      message.content.startsWith(TODO_COMPACTION_PRESERVATION_LABEL)
+      message.content.startsWith(TODO_COMPACTION_PRESERVATION_LABEL) ||
+      message.content.startsWith(AGENTS_SNIPPET_LABEL) ||
+      isPendingApprovalsSnippet(message.content)
     ) {
       continue;
     }
-    return message;
+    return index;
   }
 
-  return undefined;
+  return -1;
 }
 
 function extractPreviousCheckpoint(messages: readonly ModelMessage[]): {
@@ -423,12 +452,13 @@ function assistantMessageText(message: ModelMessage): string {
 
 function selectRecentWindowSize(
   messages: readonly ModelMessage[],
+  protectedTail: readonly ModelMessage[],
   config: CompactionConfig,
 ): number {
   const maxKeep = Math.min(config.recentWindowSize, Math.max(messages.length - 1, 0));
   const reserve = resolveCompactionSummaryReserve(config);
   let keep = 0;
-  let recentTokens = 0;
+  let recentTokens = estimateModelMessageTokens(protectedTail);
 
   for (let index = messages.length - 1; index >= 0 && keep < maxKeep; index -= 1) {
     const message = messages[index];
@@ -436,7 +466,7 @@ function selectRecentWindowSize(
       continue;
     }
 
-    const messageTokens = estimateTokens([message]);
+    const messageTokens = estimateModelMessageTokens([message]);
     if (recentTokens + messageTokens + reserve > config.threshold) {
       break;
     }

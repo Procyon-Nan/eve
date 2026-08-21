@@ -232,6 +232,26 @@ describe("Client request policy", () => {
     expect(info).not.toHaveProperty("ignoredByClient");
   });
 
+  it("normalizes configured sandboxes from the prior version 2 response shape", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        ...AGENT_INFO,
+        sandbox: {
+          hasBootstrap: false,
+          hasOnSession: false,
+          logicalPath: "sandbox.ts",
+          sourceId: "sandbox.ts",
+          sourceKind: "module",
+        },
+      }),
+    );
+    const client = new Client({ host: "https://eve.test" });
+
+    const info = await client.info();
+
+    expect(info.sandbox?.status).toBe("configured");
+  });
+
   it("rejects a non-Eve response from the agent info route", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({ kind: "eve-agent-info", version: 1 }),

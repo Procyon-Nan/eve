@@ -45,6 +45,7 @@ export default defineTool({
 | `defineSchedule`                                      | `eve/schedules`                                      | `agent/schedules/<name>.ts`                                                | [Schedules](../schedules)                              |
 | `defineState`                                         | `eve/context`                                        | tools, hooks, lifecycle                                                    | [Session context](../guides/session-context)           |
 | `defineSandbox`                                       | `eve/sandbox`                                        | `agent/sandbox.ts`                                                         | [Sandbox](../sandbox)                                  |
+| `disableSandbox`                                      | `eve/sandbox`                                        | `agent/sandbox.ts`                                                         | [Sandbox](../sandbox#disabling-the-sandbox)            |
 | `defineInstrumentation`                               | `eve/instrumentation`                                | `agent/instrumentation.ts`                                                 | [instrumentation.ts](../guides/instrumentation)        |
 | `defineRemoteAgent`                                   | `eve`                                                | `agent/subagents/<id>/agent.ts`                                            | [Remote agents](../guides/remote-agents)               |
 | `defineEval`                                          | `eve/evals`                                          | `evals/*.eval.ts`                                                          | [Evals](../evals/overview)                             |
@@ -87,7 +88,7 @@ A few additional helpers round out the set: `defineGlobTool`, `defineGrepTool`, 
 | `eve/skills`                                                | `defineSkill`, `defineDynamic`                                                                            |
 | `eve/instructions`                                          | `defineInstructions`, `defineDynamic`                                                                     |
 | `eve/context`                                               | `defineState`, session and state types                                                                    |
-| `eve/sandbox`                                               | `defineSandbox`, backends                                                                                 |
+| `eve/sandbox`                                               | `defineSandbox`, `disableSandbox`, backends                                                               |
 | `eve/instrumentation`                                       | `defineInstrumentation`, `isChannel`                                                                      |
 | `eve/models/openai`                                         | `chatgpt`, deprecated `experimental_chatgpt`                                                              |
 | `eve/evals`                                                 | `defineEval`, `defineEvalConfig`, `mockModel`, eval types                                                 |

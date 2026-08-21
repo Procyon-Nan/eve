@@ -15,8 +15,9 @@ export type SandboxSessionState = SandboxBackendSessionState;
  *
  * Contains only stable identifiers — live handles stay in a
  * process-level cache and are rehydrated per step via the backend.
- * Every agent owns exactly one sandbox, so the state is just a single
- * `initialized` flag and an optional persisted session record.
+ * Enabled agents own one sandbox, so the state is a single `initialized` flag
+ * and an optional persisted session record. Disabled access captures the same
+ * empty shape without provisioning a backend.
  */
 export interface SandboxState {
   readonly initialized: boolean;

@@ -122,7 +122,7 @@ function expectStepFn(value: StepNext): StepFn {
 }
 
 describe("tool-loop structured compaction accounting", () => {
-  it("compacts before the continuation step when structured tool results were appended", async () => {
+  it("does not summarize structured tool results from the active turn", async () => {
     vi.mocked(generateText).mockResolvedValue({
       text: "summary",
     } as Awaited<ReturnType<typeof generateText>>);
@@ -220,18 +220,24 @@ describe("tool-loop structured compaction accounting", () => {
 
     const second = await expectStepFn(first.next)(first.session);
 
-    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
     expect(second.session.history[0]).toEqual({
-      content: "Summary of our conversation so far:",
+      content: "Compute something",
       role: "user",
     });
-    expect(second.session.history[1]).toEqual({
-      content: "summary",
-      role: "assistant",
-    });
+    expect(
+      second.session.history.some(
+        (message) =>
+          message.role === "tool" &&
+          Array.isArray(message.content) &&
+          message.content.some(
+            (part) => part.type === "tool-result" && part.toolCallId === "call-1",
+          ),
+      ),
+    ).toBe(true);
   });
 
-  it("counts synthesized pending-input tool responses when checking for compaction", async () => {
+  it("does not summarize synthesized pending-input responses from the active turn", async () => {
     vi.mocked(generateText).mockResolvedValue({
       text: "summary",
     } as Awaited<ReturnType<typeof generateText>>);
@@ -285,15 +291,12 @@ describe("tool-loop structured compaction accounting", () => {
       ],
     });
 
-    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
     expect(result.session.history[0]).toEqual({
-      content: "Summary of our conversation so far:",
+      content: "Previous exact prompt",
       role: "user",
     });
-    expect(result.session.history[1]).toEqual({
-      content: "summary",
-      role: "assistant",
-    });
+    expect(result.session.history.some((message) => message.role === "tool")).toBe(true);
   });
 
   it("keeps tool results verbatim across steps so history is append-only", async () => {

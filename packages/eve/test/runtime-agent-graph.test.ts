@@ -3,6 +3,7 @@ import {
   createCompiledAgentResources,
   createCompiledAgentManifest,
   createCompiledAgentNodeManifest,
+  DISABLED_COMPILED_SANDBOX_KIND,
   ROOT_COMPILED_AGENT_NODE_ID,
 } from "../src/compiler/manifest.js";
 import type { CompiledModuleMap } from "../src/compiler/module-map.js";
@@ -191,6 +192,135 @@ describe("resolveRuntimeAgentGraph", () => {
       },
     ]);
     expect(graph.nodesByNodeId.has("subagents/researcher")).toBe(true);
+  });
+
+  it("disables only the selected node and omits sandbox-backed framework tools", async () => {
+    const subagentNodeId = "subagents/researcher";
+    const manifest = createCompiledAgentManifest({
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      config: {
+        model: {
+          id: TEST_DEFAULT_MODEL_ID,
+          routing: { kind: "gateway", target: "openai" },
+        },
+        name: "workspace-agent",
+      },
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+      subagentEdges: [{ childNodeId: subagentNodeId, parentNodeId: ROOT_COMPILED_AGENT_NODE_ID }],
+      subagents: [
+        {
+          agent: createCompiledAgentNodeManifest({
+            agentRoot: "/app/agent/subagents/researcher",
+            appRoot: "/app",
+            config: {
+              description: "Research one topic.",
+              model: {
+                id: TEST_DEFAULT_MODEL_ID,
+                routing: { kind: "gateway", target: "openai" },
+              },
+              name: "researcher",
+            },
+          }),
+          description: "Research one topic.",
+          entryPath: "/app/agent/subagents/researcher",
+          logicalPath: subagentNodeId,
+          name: "researcher",
+          nodeId: subagentNodeId,
+          rootPath: "/app/agent/subagents/researcher",
+          sourceId: subagentNodeId,
+          sourceKind: "module",
+        },
+      ],
+    });
+
+    const graph = await resolveRuntimeAgentGraph({
+      manifest,
+      moduleMap: {
+        nodes: {
+          [ROOT_COMPILED_AGENT_NODE_ID]: { modules: {} },
+          [subagentNodeId]: { modules: {} },
+        },
+      },
+    });
+
+    expect(graph.root.sandboxRegistry.sandbox).toBeNull();
+    expect(graph.nodesByNodeId.get(subagentNodeId)?.sandboxRegistry.sandbox).not.toBeNull();
+    const toolNames = graph.root.turnAgent.tools.map((tool) => tool.name);
+    expect(toolNames).toEqual(
+      expect.arrayContaining(["ask_question", "load_skill", "todo", "web_fetch", "web_search"]),
+    );
+    expect(toolNames).not.toEqual(expect.arrayContaining(["bash", "read_file", "write_file"]));
+  });
+
+  it("rejects a child that selects an explicitly disabled parent sandbox", async () => {
+    const subagentNodeId = "subagents/researcher";
+    const manifest = createCompiledAgentManifest({
+      agentRoot: "/app/agent",
+      appRoot: "/app",
+      config: {
+        model: {
+          id: TEST_DEFAULT_MODEL_ID,
+          routing: { kind: "gateway", target: "openai" },
+        },
+        name: "workspace-agent",
+      },
+      sandbox: {
+        kind: DISABLED_COMPILED_SANDBOX_KIND,
+        logicalPath: "sandbox.ts",
+        sourceId: "sandbox.ts",
+        sourceKind: "module",
+      },
+      subagentEdges: [{ childNodeId: subagentNodeId, parentNodeId: ROOT_COMPILED_AGENT_NODE_ID }],
+      subagents: [
+        {
+          agent: createCompiledAgentNodeManifest({
+            agentRoot: "/app/agent/subagents/researcher",
+            appRoot: "/app",
+            config: {
+              description: "Research one topic.",
+              model: {
+                id: TEST_DEFAULT_MODEL_ID,
+                routing: { kind: "gateway", target: "openai" },
+              },
+              name: "researcher",
+            },
+            sandbox: {
+              inheritsParent: true,
+              logicalPath: "sandbox.ts",
+              sourceHash: "child-sandbox-hash",
+              sourceId: "sandbox.ts",
+              sourceKind: "module",
+            },
+          }),
+          description: "Research one topic.",
+          entryPath: "/app/agent/subagents/researcher",
+          logicalPath: subagentNodeId,
+          name: "researcher",
+          nodeId: subagentNodeId,
+          rootPath: "/app/agent/subagents/researcher",
+          sourceId: subagentNodeId,
+          sourceKind: "module",
+        },
+      ],
+    });
+
+    await expect(
+      resolveRuntimeAgentGraph({
+        manifest,
+        moduleMap: {
+          nodes: {
+            [ROOT_COMPILED_AGENT_NODE_ID]: { modules: {} },
+            [subagentNodeId]: { modules: {} },
+          },
+        },
+      }),
+    ).rejects.toThrow(/selects parent\.sandbox.*parent explicitly disables sandbox access/s);
   });
 
   it("resolves recursive local subagents into a cached runtime graph bundle", async () => {

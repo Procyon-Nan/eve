@@ -8,9 +8,8 @@ import {
  * not touch the sandbox itself.
  *
  * Production code constructs registries via
- * `createRuntimeSandboxRegistry` from the resolved authored graph;
- * `RuntimeSandboxRegistry.sandbox` is non-null there. Tests that need a
- * registry but never call into the sandbox use this helper.
+ * `createRuntimeSandboxRegistry` from the resolved authored graph. Tests that
+ * need an enabled registry but never call into the sandbox use this helper.
  */
 export function createStubSandboxRegistry(): RuntimeSandboxRegistry {
   return {
