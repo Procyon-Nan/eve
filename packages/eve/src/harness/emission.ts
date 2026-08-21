@@ -14,6 +14,7 @@ import type {
   AssistantStepFinishReason,
   RuntimeIdentity,
   RuntimeTraceContext,
+  SubagentSessionInvocationMetadata,
 } from "#protocol/message.js";
 import {
   createActionsRequestedEvent,
@@ -79,16 +80,19 @@ export async function emitTurnPreamble(
   emitFn: HarnessEmitFn,
   input: StepInput,
   state: HarnessEmissionState,
-  runtimeIdentity?: RuntimeIdentity,
-  traceContext?: RuntimeTraceContext,
+  options?: {
+    readonly invocation?: SubagentSessionInvocationMetadata;
+    readonly runtime?: RuntimeIdentity;
+    readonly trace?: RuntimeTraceContext;
+  },
 ): Promise<HarnessEmissionState> {
   const turnId = `turn_${state.sequence}`;
 
   if (!state.sessionStarted) {
-    await emitFn(createSessionStartedEvent({ runtime: runtimeIdentity, trace: traceContext }));
+    await emitFn(createSessionStartedEvent(options));
   }
 
-  await emitFn(createTurnStartedEvent({ sequence: state.sequence, trace: traceContext, turnId }));
+  await emitFn(createTurnStartedEvent({ sequence: state.sequence, trace: options?.trace, turnId }));
 
   if (input.message !== undefined) {
     await emitFn(

@@ -787,6 +787,9 @@ describe("workflowEntry integration", () => {
 
       try {
         expect(firstTurn.length).toBeGreaterThan(1);
+        expect(
+          filterEventsByType(firstTurn, "session.started")[0]?.data.invocation,
+        ).toBeUndefined();
         // No two events share an id, including appends that share
         // `(turnId, sequence, stepIndex)`.
         expect(firstTurn.every((event) => isEventId(event.meta.id))).toBe(true);
@@ -909,6 +912,12 @@ describe("workflowEntry integration", () => {
             },
             continuationToken: childContinuationToken,
             mode: "conversation",
+            parent: {
+              callId: "call-1",
+              rootSessionId: "root-session",
+              sessionId: "parent-session",
+              turn: { id: "turn-parent", sequence: 2 },
+            },
           }),
         },
       ]);
@@ -917,6 +926,13 @@ describe("workflowEntry integration", () => {
       try {
         const firstTurn = await withTimeout(stream.nextTurn(), "delegated first turn");
         expect(firstTurn.at(-1)?.type).toBe("session.waiting");
+        expect(filterEventsByType(firstTurn, "session.started")[0]?.data.invocation).toEqual({
+          kind: "subagent",
+          name: "researcher",
+          parentCallId: "call-1",
+          parentSessionId: "parent-session",
+          parentTurnId: "turn-parent",
+        });
         await expect(waitForRuntimeActionResult(child.runId, "call-1")).resolves.toMatchObject({
           kind: "runtime-action-result",
           results: [
@@ -949,6 +965,7 @@ describe("workflowEntry integration", () => {
 
         const secondTurn = await withTimeout(stream.nextTurn(), "delegated follow-up turn");
         expect(secondTurn.at(-1)?.type).toBe("session.waiting");
+        expect(filterEventsByType(secondTurn, "session.started")).toHaveLength(0);
         await expect(waitForRuntimeActionResult(child.runId, "call-2")).resolves.toMatchObject({
           kind: "runtime-action-result",
           results: [
@@ -1190,6 +1207,12 @@ describe("workflowEntry integration", () => {
     await runtime.run(async () => {
       const serializedContext = buildSerializedContext({
         channelKind: "subagent",
+        channelState: {
+          callId: "call-subagent-1",
+          parentContinuationToken: "parent-continuation-token",
+          parentSessionId: "parent-session",
+          subagentName: "researcher",
+        },
         continuationToken: "subagent:parent-session:call-subagent-1",
         mode: "task",
         parent: {
@@ -1222,21 +1245,34 @@ describe("workflowEntry integration", () => {
         },
       );
 
-      await expect(run.returnValue).resolves.toEqual({
-        output: expect.stringContaining("subagent tag round-trip"),
-      });
-      await expect(run.status).resolves.toBe("completed");
+      const stream = captureEvents(run);
+      try {
+        const events = await stream.nextUntil(
+          "subagent session started",
+          (event) => event.type === "session.started",
+        );
+        expect(filterEventsByType(events, "session.started")[0]?.data.invocation).toEqual({
+          kind: "subagent",
+          name: "researcher",
+          parentCallId: "call-subagent-1",
+          parentSessionId: "parent-session",
+          parentTurnId: "turn-parent",
+        });
 
-      const world = await getWorld();
-      const persisted = await world.runs.get(run.runId);
-      const attrs = (persisted as { attributes?: Record<string, string> }).attributes ?? {};
+        const world = await getWorld();
+        const persisted = await world.runs.get(run.runId);
+        const attrs = (persisted as { attributes?: Record<string, string> }).attributes ?? {};
 
-      expect(attrs["$eve.type"]).toBe("subagent");
-      expect(attrs["$eve.parent"]).toBe("parent-session");
-      expect(attrs["$eve.parent_call"]).toBe("call-subagent-1");
-      expect(attrs["$eve.parent_turn"]).toBe("turn-parent");
-      expect(attrs["$eve.root"]).toBe("root-session");
-      expect(attrs["$eve.trigger"]).toBe("subagent");
+        expect(attrs["$eve.type"]).toBe("subagent");
+        expect(attrs["$eve.parent"]).toBe("parent-session");
+        expect(attrs["$eve.parent_call"]).toBe("call-subagent-1");
+        expect(attrs["$eve.parent_turn"]).toBe("turn-parent");
+        expect(attrs["$eve.root"]).toBe("root-session");
+        expect(attrs["$eve.trigger"]).toBe("subagent");
+      } finally {
+        stream.dispose();
+        await run.cancel();
+      }
     });
   });
 });

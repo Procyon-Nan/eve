@@ -24,6 +24,7 @@ import {
   AuthKey,
   CapabilitiesKey,
   ModeKey,
+  ParentSessionKey,
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicToolRuntimeRevisionKey,
   TurnTaskDeliveryKey,
@@ -47,6 +48,7 @@ import { RuntimeActionSettlementTimesKey } from "#harness/runtime-action-settlem
 import { preserveSerializedAgentTraceState } from "#tracing/agent-trace-context-store.js";
 import { matchAuthorizationCallbacks } from "#execution/authorization-callback-match.js";
 import { readTurnSleepDurationMs } from "#harness/turn-sleep.js";
+import { resolveSubagentSessionInvocation } from "#execution/subagent-session-invocation.js";
 import { isTurnCancellation, throwIfTurnAborted } from "#harness/turn-cancellation.js";
 import { setChannelContext } from "#execution/channel-context.js";
 import { hasPendingInputBatch } from "#harness/input-requests.js";
@@ -347,6 +349,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     turnAgent: effectiveAgent.turnAgent,
   };
   const runtimeIdentity = buildRuntimeIdentity(effectiveNode);
+  const sessionInvocation = resolveSubagentSessionInvocation(
+    ctx.get(ParentSessionKey),
+    ctx.require(ChannelKey),
+  );
   try {
     const deploymentId = process.env.VERCEL_DEPLOYMENT_ID?.trim();
     const dynamicRuntimeRevision = deploymentId
@@ -358,7 +364,10 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       ctx.set(SessionDynamicSubagentRuntimeRevisionKey, dynamicRuntimeRevision);
       ctx.set(SessionDynamicToolRuntimeRevisionKey, dynamicRuntimeRevision);
     } else {
-      const refreshEvent = createSessionStartedEvent({ runtime: runtimeIdentity });
+      const refreshEvent = createSessionStartedEvent({
+        invocation: sessionInvocation,
+        runtime: runtimeIdentity,
+      });
       await Promise.all([
         refreshDynamicSessionSubagentsForRuntimeRevision({
           ctx,
@@ -475,13 +484,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             session: schemaSession,
           });
           try {
-            emissionState = await emitTurnPreamble(
-              handleEvent,
-              {},
-              emissionState,
-              runtimeIdentity,
-              traceContext,
-            );
+            emissionState = await emitTurnPreamble(handleEvent, {}, emissionState, {
+              invocation: sessionInvocation,
+              runtime: runtimeIdentity,
+              trace: traceContext,
+            });
           } finally {
             instructionMessages = drainDynamicInstructionUserMessages(ctx);
             schemaSession = {
@@ -541,6 +548,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             nodeId: bundle.nodeId,
           },
           node: effectiveNode,
+          sessionInvocation,
           workflowMaxSubagents: refreshedSession.workflowMaxSubagents,
         });
         return step(modelSession, stepInput);

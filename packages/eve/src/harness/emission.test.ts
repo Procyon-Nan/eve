@@ -142,13 +142,44 @@ describe("emitTurnPreamble", () => {
       },
       { message: "hello" },
       { sequence: 0, sessionStarted: false, stepIndex: 0, turnId: "" },
-      undefined,
-      trace,
+      { trace },
     );
 
     expect(events.slice(0, 2)).toEqual([
       { data: { trace }, type: "session.started" },
       { data: { sequence: 0, trace, turnId: "turn_0" }, type: "turn.started" },
+    ]);
+  });
+
+  it("attaches invocation metadata only to the first session event", async () => {
+    const events: Array<Parameters<HarnessEmitFn>[0]> = [];
+    const invocation = {
+      kind: "subagent" as const,
+      name: "researcher",
+      parentCallId: "call-parent",
+      parentSessionId: "session-parent",
+      parentTurnId: "turn-parent",
+    };
+
+    const first = await emitTurnPreamble(
+      async (event) => {
+        events.push(event);
+      },
+      { message: "first" },
+      { sequence: 0, sessionStarted: false, stepIndex: 0, turnId: "" },
+      { invocation },
+    );
+    await emitTurnPreamble(
+      async (event) => {
+        events.push(event);
+      },
+      { message: "second" },
+      { ...first, sequence: 1, turnId: "" },
+      { invocation },
+    );
+
+    expect(events.filter((event) => event.type === "session.started")).toEqual([
+      { data: { invocation }, type: "session.started" },
     ]);
   });
 });

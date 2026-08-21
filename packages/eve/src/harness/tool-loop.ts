@@ -991,13 +991,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         let instructionMessages: ModelMessage[] = [];
         try {
           const traceContext = await preparePreambleTrace();
-          emissionState = await emitTurnPreamble(
-            emit,
-            preambleStepInput ?? {},
-            emissionState,
-            config.runtimeIdentity,
-            traceContext,
-          );
+          emissionState = await emitTurnPreamble(emit, preambleStepInput ?? {}, emissionState, {
+            invocation: config.sessionInvocation,
+            runtime: config.runtimeIdentity,
+            trace: traceContext,
+          });
         } catch (error) {
           instructionMessages =
             store === undefined ? [] : drainDynamicInstructionUserMessages(store);
@@ -1096,13 +1094,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       }
       try {
         const traceContext = await preparePreambleTrace();
-        emissionState = await emitTurnPreamble(
-          emit,
-          preambleStepInput ?? {},
-          emissionState,
-          config.runtimeIdentity,
-          traceContext,
-        );
+        emissionState = await emitTurnPreamble(emit, preambleStepInput ?? {}, emissionState, {
+          invocation: config.sessionInvocation,
+          runtime: config.runtimeIdentity,
+          trace: traceContext,
+        });
       } catch (error) {
         instructionMessages = store === undefined ? [] : drainDynamicInstructionUserMessages(store);
         session = {

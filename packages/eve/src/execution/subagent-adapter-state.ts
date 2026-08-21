@@ -52,6 +52,7 @@ export function isSubagentAdapterState(value: unknown): value is SubagentAdapter
     typeof state.parentContinuationToken === "string" &&
     state.parentContinuationToken.length > 0 &&
     typeof state.parentSessionId === "string" &&
+    state.parentSessionId.length > 0 &&
     typeof state.subagentName === "string" &&
     state.subagentName.length > 0
   );

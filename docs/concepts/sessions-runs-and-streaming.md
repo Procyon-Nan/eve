@@ -45,7 +45,7 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 
 | Event                     | Meaning                                                                                                          |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `session.started`         | A durable session was created; carries `trace` when the runtime is traced.                                       |
+| `session.started`         | A durable session was created; carries `trace` when traced and `invocation` for local subagent children.         |
 | `turn.started`            | A new turn began; carries the active `trace` when the runtime is traced.                                         |
 | `message.received`        | An inbound user message was accepted; carries flattened text plus structured text/file parts.                    |
 | `step.started`            | A model step began.                                                                                              |

@@ -9,6 +9,7 @@ import {
   ContinuationTokenKey,
   DynamicSubagentAgentConfigKey,
   ModeKey,
+  ParentSessionKey,
   SessionCallbackKey,
   SessionDynamicSubagentSelectionsKey,
   SessionDynamicModelReferenceKey,
@@ -28,7 +29,7 @@ import { getProxyInputRequests, upsertProxyInputRequests } from "#harness/proxy-
 import { appendPendingInputBatch } from "#harness/input-requests.js";
 import type { HarnessSession, StepResult } from "#harness/types.js";
 import { createEmptyHookRegistry } from "#runtime/hooks/registry.js";
-import { createInputRequestedEvent } from "#protocol/message.js";
+import { createInputRequestedEvent, type SessionStartedStreamEvent } from "#protocol/message.js";
 import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
 import {
   createDurableSessionState,
@@ -2311,7 +2312,7 @@ describe("turnStep", () => {
         originalClearVirtualContext.call(this);
       },
     );
-    const handler = vi.fn(() => {
+    const handler = vi.fn((_event: SessionStartedStreamEvent) => {
       lifecycleOrder.push("refresh");
       return {
         current_tool: defineTool({
@@ -2330,10 +2331,19 @@ describe("turnStep", () => {
       sourceId: "test:current",
       sourceKind: "module",
     } as never;
+    const subagentAdapter: ChannelAdapter = {
+      kind: "subagent",
+      state: {
+        callId: "call-parent",
+        parentContinuationToken: "parent-token",
+        parentSessionId: "parent-session",
+        subagentName: "researcher",
+      },
+    };
     const compiledArtifactsSource = { kind: "bundled" } as const;
     const compiledBundle = {
       adapterRegistry: {
-        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
+        adaptersByKind: new Map([[subagentAdapter.kind, subagentAdapter]]),
       },
       compiledArtifactsSource,
       graph: {
@@ -2379,9 +2389,15 @@ describe("turnStep", () => {
     const ctx = new ContextContainer();
     ctx.set(AuthKey, null);
     ctx.set(BundleKey, compiledBundle);
-    ctx.set(ChannelKey, threadContextAdapter);
-    ctx.set(ContinuationTokenKey, "http:thread-context");
+    ctx.set(ChannelKey, subagentAdapter);
+    ctx.set(ContinuationTokenKey, "subagent:parent-session:call-parent");
     ctx.set(ModeKey, "conversation");
+    ctx.set(ParentSessionKey, {
+      callId: "call-parent",
+      rootSessionId: "root-session",
+      sessionId: "parent-session",
+      turn: { id: "turn-parent", sequence: 0 },
+    });
     ctx.set(SessionIdKey, "session-1");
     ctx.set(SessionDynamicToolRuntimeRevisionKey, "deployment:dpl_old");
     ctx.set(SessionDynamicToolMetadataKey, [
@@ -2414,6 +2430,18 @@ describe("turnStep", () => {
     });
 
     expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        invocation: {
+          kind: "subagent",
+          name: "researcher",
+          parentCallId: "call-parent",
+          parentSessionId: "parent-session",
+          parentTurnId: "turn-parent",
+        },
+      },
+      type: "session.started",
+    });
     expect(lifecycleOrder).toEqual(["refresh", "clear", "execute"]);
     expect(result.serializedContext[SessionDynamicToolRuntimeRevisionKey.name]).toBe(
       "deployment:dpl_new",
