@@ -4050,35 +4050,40 @@ describe("createToolLoopHarness", () => {
   });
 
   it("emits a recoverable failure cascade and parks the session on a non-terminal model-call error", async () => {
-    setupMockAgentError(new Error("Model blew up"));
+    vi.useFakeTimers();
+    try {
+      setupMockAgentError(new Error("Model blew up"));
 
-    const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+      const { emit, events } = createEventCollector();
+      const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
 
-    const result = await runStep(createTestSession(), { message: "Hi" });
+      const pending = runStep(createTestSession(), { message: "Hi" });
+      await vi.runAllTimersAsync();
+      const result = await pending;
 
-    // A plain Error defaults to the recoverable classification — the
-    // session parks (`next: null`) so the user can follow up in the
-    // same thread rather than the whole run being torn down.
-    expect(result.next).toBeNull();
-    expect(result.settledTurn).toEqual({ isError: true, output: "Model blew up" });
+      expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledTimes(3);
+      expect(result.next).toBeNull();
+      expect(result.settledTurn).toEqual({ isError: true, output: "Model blew up" });
 
-    const types = events.map((e) => e.type);
-    expect(types).toContain("session.started");
-    expect(types).toContain("step.failed");
-    expect(types).toContain("turn.failed");
-    expect(types).toContain("session.waiting");
-    // The recoverable path must not emit session.failed — that event
-    // signals a terminal outcome to channel adapters.
-    expect(types).not.toContain("session.failed");
+      const types = events.map((e) => e.type);
+      expect(types).toContain("session.started");
+      expect(types).toContain("step.failed");
+      expect(types).toContain("turn.failed");
+      expect(types).toContain("session.waiting");
+      expect(types).not.toContain("session.failed");
 
-    const stepFailed = events.find((e) => e.type === "step.failed");
-    expect(stepFailed).toBeDefined();
-    expect(stepFailed!.data).toMatchObject({
-      code: "MODEL_CALL_FAILED",
-      message: "Model blew up",
-    });
-    expect((stepFailed!.data as { details?: { errorId?: string } }).details?.errorId).toBeDefined();
+      const stepFailed = events.find((e) => e.type === "step.failed");
+      expect(stepFailed).toBeDefined();
+      expect(stepFailed!.data).toMatchObject({
+        code: "MODEL_CALL_FAILED",
+        message: "Model blew up",
+      });
+      expect(
+        (stepFailed!.data as { details?: { errorId?: string } }).details?.errorId,
+      ).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rethrows a recoverable task-mode model error for durable step retry", async () => {
@@ -4141,27 +4146,33 @@ describe("createToolLoopHarness", () => {
     );
   });
 
-  it("emits the full terminal failure cascade on a structural 4xx model-call error", async () => {
-    // 400/401/403/404 responses are classified as terminal — the
-    // session is torn down because retrying would hit the same wall.
-    const error = Object.assign(new Error("invalid api key"), {
-      name: "AI_APICallError",
-      statusCode: 401,
-    });
-    setupMockAgentError(error);
+  it("parks after three attempts on a structural 4xx model-call error", async () => {
+    vi.useFakeTimers();
+    try {
+      const error = Object.assign(new Error("invalid api key"), {
+        name: "AI_APICallError",
+        statusCode: 401,
+      });
+      setupMockAgentError(error);
 
-    const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+      const { emit, events } = createEventCollector();
+      const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
 
-    const result = await runStep(createTestSession(), { message: "Hi" });
+      const pending = runStep(createTestSession(), { message: "Hi" });
+      await vi.runAllTimersAsync();
+      const result = await pending;
 
-    expect(result.next).toEqual({ done: true, output: "" });
+      expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledTimes(3);
+      expect(result.next).toBeNull();
 
-    const types = events.map((e) => e.type);
-    expect(types).toContain("step.failed");
-    expect(types).toContain("turn.failed");
-    expect(types).toContain("session.failed");
-    expect(types).not.toContain("session.waiting");
+      const types = events.map((e) => e.type);
+      expect(types).toContain("step.failed");
+      expect(types).toContain("turn.failed");
+      expect(types).toContain("session.waiting");
+      expect(types).not.toContain("session.failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces a terminal model-call error to the parent as a failed task result", async () => {
@@ -4198,69 +4209,86 @@ describe("createToolLoopHarness", () => {
     expect(types).toContain("session.failed");
   });
 
-  it("surfaces a terminal model-call error to a delegated conversation caller", async () => {
-    const error = Object.assign(new Error("No endpoints found for anthropic/claude-3.5-haiku"), {
-      name: "AI_APICallError",
-      statusCode: 404,
-    });
-    setupMockAgentError(error);
+  it("parks a delegated conversation caller after a terminal model-call error", async () => {
+    vi.useFakeTimers();
+    try {
+      const error = Object.assign(new Error("No endpoints found for anthropic/claude-3.5-haiku"), {
+        name: "AI_APICallError",
+        statusCode: 404,
+      });
+      setupMockAgentError(error);
 
-    const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
-    const ctx = new ContextContainer();
-    setDelegatedParent(ctx);
+      const { emit, events } = createEventCollector();
+      const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+      const ctx = new ContextContainer();
+      setDelegatedParent(ctx);
 
-    const result = await contextStorage.run(ctx, () =>
-      runStep(createTestSession(), { message: "Delegated turn" }),
-    );
+      const pending = contextStorage.run(ctx, () =>
+        runStep(createTestSession(), { message: "Delegated turn" }),
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
 
-    expect(result.next).toMatchObject({
-      done: true,
-      isError: true,
-      output: expect.stringContaining("No endpoints found for anthropic/claude-3.5-haiku"),
-    });
+      expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledTimes(3);
+      expect(result.next).toBeNull();
+      expect(result.settledTurn).toMatchObject({
+        isError: true,
+        output: expect.stringContaining("No endpoints found for anthropic/claude-3.5-haiku"),
+      });
 
-    const types = events.map((e) => e.type);
-    expect(types).toContain("step.failed");
-    expect(types).toContain("turn.failed");
-    expect(types).toContain("session.failed");
+      const types = events.map((e) => e.type);
+      expect(types).toContain("step.failed");
+      expect(types).toContain("turn.failed");
+      expect(types).toContain("session.waiting");
+      expect(types).not.toContain("session.failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("emits the full terminal failure cascade on an explicit Gateway invalid-request error", async () => {
-    setupMockAgentError(
-      createGatewayModelCallError({
-        gatewayName: "GatewayInvalidRequestError",
-        gatewayType: "invalid_request_error",
-        upstreamType: "invalid_request_error",
-      }),
-    );
+  it("parks after three attempts on an explicit Gateway invalid-request error", async () => {
+    vi.useFakeTimers();
+    try {
+      setupMockAgentError(
+        createGatewayModelCallError({
+          gatewayName: "GatewayInvalidRequestError",
+          gatewayType: "invalid_request_error",
+          upstreamType: "invalid_request_error",
+        }),
+      );
 
-    const { emit, events } = createEventCollector();
-    const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+      const { emit, events } = createEventCollector();
+      const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
 
-    const result = await runStep(createTestSession(), { message: "Hi" });
+      const pending = runStep(createTestSession(), { message: "Hi" });
+      await vi.runAllTimersAsync();
+      const result = await pending;
 
-    expect(result.next).toEqual({ done: true, output: "" });
+      expect(vi.mocked(ToolLoopAgent)).toHaveBeenCalledTimes(3);
+      expect(result.next).toBeNull();
 
-    const types = events.map((e) => e.type);
-    expect(types).toContain("step.failed");
-    expect(types).toContain("turn.failed");
-    expect(types).toContain("session.failed");
-    expect(types).not.toContain("session.waiting");
+      const types = events.map((e) => e.type);
+      expect(types).toContain("step.failed");
+      expect(types).toContain("turn.failed");
+      expect(types).toContain("session.waiting");
+      expect(types).not.toContain("session.failed");
 
-    const stepFailed = events.find((e) => e.type === "step.failed");
-    expect(stepFailed).toBeDefined();
-    expect(stepFailed!.data).toMatchObject({
-      details: {
-        gatewayName: "GatewayInvalidRequestError",
-        gatewayType: "invalid_request_error",
-        statusCode: 400,
-        upstreamType: "invalid_request_error",
-      },
-    });
-    expect(JSON.stringify((stepFailed!.data as { details?: unknown }).details)).not.toContain(
-      "large schema",
-    );
+      const stepFailed = events.find((e) => e.type === "step.failed");
+      expect(stepFailed).toBeDefined();
+      expect(stepFailed!.data).toMatchObject({
+        details: {
+          gatewayName: "GatewayInvalidRequestError",
+          gatewayType: "invalid_request_error",
+          statusCode: 400,
+          upstreamType: "invalid_request_error",
+        },
+      });
+      expect(JSON.stringify((stepFailed!.data as { details?: unknown }).details)).not.toContain(
+        "large schema",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   describe("unsupported provider tool recovery", () => {
@@ -4573,7 +4601,7 @@ describe("createToolLoopHarness", () => {
       }
     });
 
-    it("bails terminally when the empty-response reissue hits a tool rejection", async () => {
+    it("parks when the empty-response reissue hits a tool rejection", async () => {
       const emptyResult: Record<string, unknown> = {
         content: [],
         finishReason: "other",
@@ -4585,7 +4613,7 @@ describe("createToolLoopHarness", () => {
       };
       // Construction order: empty response first, then the reissue throws
       // the gateway tool rejection. The pipeline is linear (the tool stage
-      // already ran and skipped), so the rejection falls to the terminal
+      // already ran and skipped), so the rejection falls to the conversation
       // floor instead of looping back into tool-drop recovery.
       setupMockAgentError(
         createGatewayUnsupportedToolError({ unsupportedTypes: ["web_search_20250305"] }),
@@ -4627,12 +4655,12 @@ describe("createToolLoopHarness", () => {
 
         // Empty original plus one reissue: two calls, no third attempt.
         expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(2);
-        expect(result.next).toEqual({ done: true, output: "" });
+        expect(result.next).toBeNull();
 
         const types = events.map((event) => event.type);
         expect(types).toContain("step.failed");
-        expect(types).toContain("session.failed");
-        expect(types).not.toContain("session.waiting");
+        expect(types).toContain("session.waiting");
+        expect(types).not.toContain("session.failed");
       } finally {
         warnSpy.mockRestore();
         errorSpy.mockRestore();
@@ -4745,10 +4773,9 @@ describe("createToolLoopHarness", () => {
       );
     });
 
-    it("falls through to terminal cascade when recovery retry also fails", async () => {
+    it("parks the conversation when recovery retry also fails", async () => {
       // Both attempts fail with the same unsupported-tool error. The
-      // existing terminal/recoverable handling runs on the second
-      // failure so the session is torn down.
+      // conversation failure floor runs on the second failure.
       const error = createGatewayUnsupportedToolError({
         unsupportedTypes: ["web_search_20250305"],
       });
@@ -4783,29 +4810,34 @@ describe("createToolLoopHarness", () => {
       // Two agent constructions: original + retry.
       expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(2);
 
-      // 400 with no known summary classifies as terminal, so the
-      // cascade is the terminal one.
-      expect(result.next).toEqual({ done: true, output: "" });
+      expect(result.next).toBeNull();
       const types = events.map((e) => e.type);
       expect(types).toContain("step.failed");
       expect(types).toContain("turn.failed");
-      expect(types).toContain("session.failed");
+      expect(types).toContain("session.waiting");
+      expect(types).not.toContain("session.failed");
     });
 
-    it("does not retry when the error is unrelated to unsupported provider tools", async () => {
-      setupMockAgentError(new Error("Model blew up"));
+    it("does not invoke tool recovery when the error is unrelated to provider tools", async () => {
+      vi.useFakeTimers();
+      try {
+        setupMockAgentError(new Error("Model blew up"));
 
-      const { emit, events } = createEventCollector();
-      const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
-      await runStep(createTestSession(), { message: "Hi" });
+        const { emit, events } = createEventCollector();
+        const runStep = createToolLoopHarness(createTestConfig("conversation", emit));
+        const pending = runStep(createTestSession(), { message: "Hi" });
+        await vi.runAllTimersAsync();
+        await pending;
 
-      // Exactly one agent construction — no recovery retry was attempted.
-      expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(1);
+        // The shared conversation budget retries three times; the specialized
+        // provider-tool recovery does not add a fourth call.
+        expect(vi.mocked(ToolLoopAgent).mock.calls.length).toBe(3);
 
-      const types = events.map((e) => e.type);
-      // The unrelated error still flows through the recoverable cascade
-      // (plain Error defaults to recoverable classification).
-      expect(types).toContain("session.waiting");
+        const types = events.map((e) => e.type);
+        expect(types).toContain("session.waiting");
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
