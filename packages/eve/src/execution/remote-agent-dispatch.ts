@@ -16,6 +16,7 @@ import {
   formatSubagentInput,
   normalizeRequestedOutputSchema,
 } from "#execution/subagent-invocation.js";
+import { resolveSubagentDelegationMessage } from "#execution/subagent-tool.js";
 import type { HarnessSession } from "#harness/types.js";
 import type { RuntimeRemoteAgentCallActionRequest } from "#runtime/actions/types.js";
 import type { RuntimeSubagentRegistry } from "#runtime/subagents/registry.js";
@@ -52,6 +53,8 @@ export async function startRemoteAgentSession(input: {
   readonly auth?: SessionAuthContext | null;
   readonly callbackBaseUrl: string | undefined;
   readonly callbackToken?: string;
+  /** Exact message validated before the parent dispatch batch starts. */
+  readonly delegationMessage?: string;
   /** The root initiator's principal, forwarded alongside {@link auth}. */
   readonly initiatorAuth?: SessionAuthContext | null;
   /**
@@ -77,6 +80,9 @@ export async function startRemoteAgentSession(input: {
   if (!input.callbackBaseUrl) {
     throw new Error("Cannot dispatch remote agent without a callback base URL.");
   }
+
+  const delegationMessage =
+    input.delegationMessage ?? resolveSubagentDelegationMessage(input.action);
 
   const forwardedPrincipal = buildForwardedPrincipalField(input);
   const requestBody: {
@@ -106,7 +112,8 @@ export async function startRemoteAgentSession(input: {
       ),
     },
     message: formatRemoteAgentCallInputMessage({
-      action: input.action,
+      message: delegationMessage,
+      name: input.action.remoteAgentName,
       persistentSession: input.persistentSessions,
       remote: input.remote,
     }),
@@ -529,15 +536,15 @@ async function resolveRemoteAgentRequestHeaders(
 }
 
 function formatRemoteAgentCallInputMessage(input: {
-  readonly action: RuntimeRemoteAgentCallActionRequest;
+  readonly message: string;
+  readonly name: string;
   readonly persistentSession?: boolean;
   readonly remote: ResolvedRuntimeRemoteAgentNode;
 }): string {
-  const message = typeof input.action.input.message === "string" ? input.action.input.message : "";
   return formatSubagentInput({
     description: input.remote.description,
-    message,
-    name: input.action.remoteAgentName,
+    message: input.message,
+    name: input.name,
     persistentSession: input.persistentSession,
     type: "remote",
   }).message;

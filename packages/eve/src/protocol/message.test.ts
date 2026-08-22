@@ -104,6 +104,7 @@ describe("message stream protocol", () => {
     const input = {
       callId: "call/1",
       childSessionId: "child/1",
+      message: "research this",
       name: "research",
       sequence: 1,
       sessionId: "parent/1",
@@ -124,6 +125,28 @@ describe("message stream protocol", () => {
       childStreamPath: "/eve/v1/session/parent%2F1/subagents/call%2F1/child%2F1/stream",
       remote: { resolverId: "remote/research", url: "https://remote.example" },
     });
+  });
+
+  it("preserves the exact subagent delegation message through encoding", () => {
+    const event = stampMessageStreamEvent(
+      createSubagentCalledEvent({
+        callId: "call_1",
+        childSessionId: "session_child",
+        message: "  Keep leading space.\nKeep the next line.  ",
+        name: "researcher",
+        sequence: 2,
+        sessionId: "session_parent",
+        toolName: "researcher",
+        turnId: "turn_1",
+        workflowId: "workflow_1",
+      }),
+    );
+
+    const decoded = JSON.parse(
+      new TextDecoder().decode(encodeMessageStreamEvent(event)).trim(),
+    ) as { data: { message: string } };
+
+    expect(decoded.data.message).toBe("  Keep leading space.\nKeep the next line.  ");
   });
 
   it("publishes the channel-local continuation token on session.waiting", () => {

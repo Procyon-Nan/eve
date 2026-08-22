@@ -61,7 +61,11 @@ import {
 import { startLocalSubagent } from "#execution/subagent-start-local.js";
 import { startRemoteSubagent } from "#execution/subagent-start-remote.js";
 import { hydrateDurableSession } from "#execution/session.js";
-import { buildSubagentRunInput, type SubagentInputSource } from "#execution/subagent-tool.js";
+import {
+  buildSubagentRunInput,
+  resolveSubagentDelegationMessage,
+  type SubagentInputSource,
+} from "#execution/subagent-tool.js";
 import { workflowEntryReference } from "#execution/workflow-runtime.js";
 import { createLogger, logError } from "#internal/logging.js";
 import { readSessionTraceContext } from "#tracing/agent-trace-context-store.js";
@@ -91,6 +95,7 @@ export type DispatchPlanEntry =
       readonly kind: "resume";
       readonly action: RuntimeAgentHandleAction;
       readonly agentId: string;
+      readonly delegationMessage: string;
       readonly dynamicRemoteAgent?: DynamicRemoteAgentConfig;
     }
   | { readonly kind: "reject"; readonly result: RuntimeSubagentDispatchFailure }
@@ -101,12 +106,14 @@ export type DispatchStartTarget =
   | {
       readonly kind: "local";
       readonly action: RuntimeSubagentCallActionRequest;
+      readonly delegationMessage: string;
       readonly dynamicSubagentAgentConfig?: DynamicSubagentAgentConfig;
       readonly source: SubagentInputSource;
     }
   | {
       readonly kind: "remote";
       readonly action: RuntimeRemoteAgentCallActionRequest;
+      readonly delegationMessage: string;
       readonly dynamicRemoteAgent?: DynamicRemoteAgentConfig;
     };
 
@@ -292,6 +299,7 @@ export async function emitSubagentCalled(input: {
       createSubagentCalledEvent({
         callId: outcome.callId,
         childSessionId: outcome.address.sessionId,
+        message: outcome.message,
         name: outcome.name,
         remote:
           outcome.address.kind === "agent/remote"
@@ -355,6 +363,11 @@ function planDispatch(input: {
       return { action, kind: "task-control" };
     }
 
+    if (!isAgentHandleAction(action)) {
+      throw new Error(`Unsupported runtime action kind "${action.kind}" in workflow runtime.`);
+    }
+    const delegationMessage = resolveSubagentDelegationMessage(action);
+
     const rawAgentId = action.input.agentId;
     const agentId =
       typeof rawAgentId === "string" && rawAgentId.trim() !== "" ? rawAgentId : undefined;
@@ -371,6 +384,7 @@ function planDispatch(input: {
         return {
           action,
           agentId,
+          delegationMessage,
           dynamicRemoteAgent:
             action.kind === "remote-agent-call" && dynamicSubagentSelection?.kind === "remote"
               ? dynamicSubagentSelection.remoteAgent
@@ -388,6 +402,7 @@ function planDispatch(input: {
       action,
       bundle: input.bundle,
       ctx: input.ctx,
+      delegationMessage,
       session: input.session,
     });
   });
@@ -399,9 +414,10 @@ function planDispatch(input: {
  * unknown-agentId fallback, so both paths enforce the same guard.
  */
 function classifyFreshStart(input: {
-  readonly action: RuntimeActionRequest;
+  readonly action: RuntimeAgentHandleAction;
   readonly bundle: CompiledBundle;
   readonly ctx: Parameters<typeof getDynamicSubagentSelection>[0];
+  readonly delegationMessage: string;
   readonly session: RuntimeSession;
 }): Extract<DispatchPlanEntry, { kind: "reject" | "start" }> {
   const { action } = input;
@@ -458,6 +474,7 @@ function classifyFreshStart(input: {
         kind: "start",
         target: {
           action,
+          delegationMessage: input.delegationMessage,
           dynamicSubagentAgentConfig: dynamicAgentConfig,
           kind: "local",
           source,
@@ -469,6 +486,7 @@ function classifyFreshStart(input: {
         kind: "start",
         target: {
           action,
+          delegationMessage: input.delegationMessage,
           dynamicRemoteAgent:
             dynamicSubagentSelection?.kind === "remote"
               ? dynamicSubagentSelection.remoteAgent
@@ -476,8 +494,6 @@ function classifyFreshStart(input: {
           kind: "remote",
         },
       };
-    default:
-      throw new Error(`Unsupported runtime action kind "${action.kind}" in workflow runtime.`);
   }
 }
 
@@ -519,6 +535,7 @@ export async function startSubagent(input: {
         capabilities: input.capabilities,
         channelMetadata: input.channelMetadata,
         currentSession: input.currentSession,
+        delegationMessage: input.target.delegationMessage,
         dynamicSubagentAgentConfig: input.target.dynamicSubagentAgentConfig,
         fanoutSize: input.fanoutSize,
         initiatorAuth: input.initiatorAuth,
@@ -538,6 +555,7 @@ export async function startSubagent(input: {
         bundle: input.bundle,
         callbackBaseUrl: input.callbackBaseUrl,
         currentSession: input.currentSession,
+        delegationMessage: input.target.delegationMessage,
         dynamicRemoteAgent: input.target.dynamicRemoteAgent,
         initiatorAuth: input.initiatorAuth,
         parentContinuationToken: input.parentContinuationToken,

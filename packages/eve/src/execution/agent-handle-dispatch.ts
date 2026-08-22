@@ -77,6 +77,7 @@ export type DispatchOutcome =
       readonly address: AgentAddress;
       readonly callId: string;
       readonly kind: "called";
+      readonly message: string;
       readonly name: string;
       readonly session: RuntimeSession;
       readonly toolName: string;
@@ -104,6 +105,8 @@ export async function dispatchToAgentHandle(input: {
   readonly agentId: string;
   readonly bundle: CompiledBundle;
   readonly currentSession: RuntimeSession;
+  /** Exact message validated while planning the complete dispatch batch. */
+  readonly delegationMessage: string;
   readonly parentToken: string;
   readonly parentTurnId: string;
 }): Promise<DispatchOutcome> {
@@ -181,6 +184,7 @@ export async function dispatchToAgentHandle(input: {
     action,
     address: handle.address,
     bundle,
+    delegationMessage: input.delegationMessage,
     identity: handle.identity,
     parentToken: input.parentToken,
   });
@@ -217,6 +221,7 @@ export async function dispatchToAgentHandle(input: {
     address: handle.address,
     callId: action.callId,
     kind: "called",
+    message: input.delegationMessage,
     name: action.name,
     session: prepared.session,
     toolName: handle.identity.name,
@@ -229,6 +234,8 @@ export async function dispatchToTaskAgentAddress(input: {
   readonly agentId: string;
   readonly bundle: CompiledBundle;
   readonly currentSession: RuntimeSession;
+  /** Exact message validated while planning the complete dispatch batch. */
+  readonly delegationMessage: string;
   readonly parentToken: string;
 }): Promise<DispatchOutcome> {
   const { action, agentId } = input;
@@ -265,6 +272,7 @@ export async function dispatchToTaskAgentAddress(input: {
     action,
     address: record.address,
     bundle: input.bundle,
+    delegationMessage: input.delegationMessage,
     identity: record.identity,
     parentToken: input.parentToken,
   });
@@ -297,6 +305,7 @@ export async function dispatchToTaskAgentAddress(input: {
     address: record.address,
     callId: action.callId,
     kind: "called",
+    message: input.delegationMessage,
     name: action.name,
     session: input.currentSession,
     toolName: record.identity.name,
@@ -317,6 +326,7 @@ async function deliverToAgentAddress(input: {
   readonly action: RuntimeAgentHandleAction;
   readonly address: AgentAddress;
   readonly bundle: CompiledBundle;
+  readonly delegationMessage: string;
   readonly identity: AgentIdentity;
   readonly parentToken: string;
 }): Promise<
@@ -325,7 +335,7 @@ async function deliverToAgentAddress(input: {
     { readonly cause: unknown; readonly deliveryAmbiguous: boolean; readonly permanent: boolean }
   >
 > {
-  const { action, address, bundle, identity } = input;
+  const { action, address, bundle, delegationMessage, identity } = input;
 
   if (address.kind === "agent/remote") {
     let resolvedRemote;
@@ -352,7 +362,7 @@ async function deliverToAgentAddress(input: {
             createEveCallbackRoutePath(input.parentToken),
           ),
         },
-        message: readSubagentMessage(action),
+        message: delegationMessage,
         outputSchema: normalizeRequestedOutputSchema(action.input.outputSchema),
         remote: { ...resolvedRemote, url: address.url },
         sessionId: address.sessionId,
@@ -382,7 +392,7 @@ async function deliverToAgentAddress(input: {
         },
         kind: "send",
         payload: {
-          message: readSubagentMessage(action),
+          message: delegationMessage,
           outputSchema: normalizeRequestedOutputSchema(action.input.outputSchema),
         },
       },
@@ -421,8 +431,4 @@ export function createAgentErrorResult(input: {
         ? input.action.remoteAgentName
         : input.action.subagentName,
   };
-}
-
-function readSubagentMessage(action: RuntimeAgentHandleAction): string {
-  return typeof action.input.message === "string" ? action.input.message : "";
 }

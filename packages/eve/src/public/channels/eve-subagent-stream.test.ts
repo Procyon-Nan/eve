@@ -164,6 +164,7 @@ function remoteCalledEvent(overrides: Partial<typeof coordinates> = {}): Message
     createSubagentCalledEvent({
       callId: values.callId,
       childSessionId: values.childSessionId,
+      message: "research this",
       name: "research",
       remote: {
         resolverId: "subagents/research",
@@ -184,6 +185,7 @@ function localCalledEvent(): MessageStreamEvent {
     createSubagentCalledEvent({
       callId: coordinates.callId,
       childSessionId: coordinates.childSessionId,
+      message: "research this",
       name: "research",
       sequence: 1,
       sessionId: coordinates.parentSessionId,

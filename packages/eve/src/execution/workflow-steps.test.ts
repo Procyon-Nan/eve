@@ -1088,6 +1088,7 @@ describe("dispatchRuntimeActionsStep", () => {
 
   it("starts a remote agent from the current dynamic selection", async () => {
     const nodeId = "subagents/research";
+    const delegationMessage = "  investigate latest routing\nwithout trimming  ";
     const compiledBundle = {
       adapterRegistry: {
         adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
@@ -1147,7 +1148,7 @@ describe("dispatchRuntimeActionsStep", () => {
         {
           callId: "call-dynamic-remote",
           description: "Delegate the work.",
-          input: { message: "investigate latest routing" },
+          input: { message: delegationMessage },
           kind: "remote-agent-call",
           name: "research",
           nodeId,
@@ -1197,6 +1198,20 @@ describe("dispatchRuntimeActionsStep", () => {
         },
       }),
     );
+    const request = fetchMock.mock.calls[0]?.[1] as { body?: unknown } | undefined;
+    expect(typeof request?.body).toBe("string");
+    const requestBody = JSON.parse(request?.body as string) as { message: string };
+    expect(requestBody.message.endsWith(`Caller message:\n${delegationMessage}`)).toBe(true);
+    const writes = workflowWritesByNamespace.get(DEFAULT_WORKFLOW_STREAM_NAMESPACE) ?? [];
+    expect(writes).toHaveLength(1);
+    const event = JSON.parse(new TextDecoder().decode(writes[0] as Uint8Array)) as {
+      data: { message: string };
+      type: string;
+    };
+    expect(event).toMatchObject({
+      data: { message: delegationMessage },
+      type: "subagent.called",
+    });
   });
 
   it("blocks a stale recursive agent call from a delegated session", async () => {

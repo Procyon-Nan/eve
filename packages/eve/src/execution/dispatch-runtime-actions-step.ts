@@ -74,6 +74,7 @@ export async function dispatchRuntimeActionsStep(
               dynamicRemoteAgent: entry.dynamicRemoteAgent,
             }),
             currentSession: nextSession,
+            delegationMessage: entry.delegationMessage,
             parentToken: input.parentContinuationToken ?? session.continuationToken,
             parentTurnId: batch.event.turnId,
           });

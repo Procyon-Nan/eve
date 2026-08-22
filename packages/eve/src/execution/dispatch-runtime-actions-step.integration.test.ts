@@ -175,7 +175,8 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("owns a local child before the start effect and confirms its running address", async () => {
-    const session = createStartSession({ kind: "local" });
+    const delegationMessage = "  research this\nwithout trimming  ";
+    const session = createStartSession({ delegationMessage, kind: "local" });
     installContext(session, {
       definition: { description: "Research", kind: "subagent" },
       nodeId: "subagents/research",
@@ -215,6 +216,9 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     expect(mocks.createSession).toHaveBeenCalledTimes(1);
     expect(mocks.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
+        input: expect.objectContaining({
+          message: expect.stringContaining(`Caller message:\n${delegationMessage}`),
+        }),
         parentTraceContext: { isRemote: false, spanId: actionSpanId, traceFlags: 1, traceId },
       }),
     );
@@ -241,7 +245,104 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         },
       ],
     });
-    expect(writes).toHaveLength(1);
+    expect(readWrittenEvents(writes)).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ message: delegationMessage }),
+        type: "subagent.called",
+      }),
+    ]);
+  });
+
+  it("keeps parallel sibling delegation messages isolated", async () => {
+    const messages = ["first sibling", "  second sibling\nwith detail  "];
+    const session = setPendingRuntimeActionBatch({
+      actions: messages.map((message, index) => ({
+        callId: `call-${index + 1}`,
+        description: "Research",
+        input: { message },
+        kind: "subagent-call" as const,
+        name: "research",
+        nodeId: "subagents/research",
+        subagentName: "research",
+      })),
+      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+      responseMessages: [],
+      session: createBaseSession(),
+    });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    mocks.createSession
+      .mockResolvedValueOnce({ sessionId: "child-session-first" })
+      .mockResolvedValueOnce({ sessionId: "child-session-second" });
+    const writes: Uint8Array[] = [];
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(writes),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(
+      mocks.createSession.mock.calls.map(
+        ([call]) => (call as { input: { message: string } }).input.message,
+      ),
+    ).toEqual([
+      expect.stringContaining(`Caller message:\n${messages[0]}`),
+      expect.stringContaining(`Caller message:\n${messages[1]}`),
+    ]);
+    expect(readWrittenEvents(writes).map((event) => event.data.message)).toEqual(messages);
+  });
+
+  it("rejects an invalid later message before dispatching any batch sibling", async () => {
+    const session = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-valid",
+          description: "Research",
+          input: { message: "valid" },
+          kind: "subagent-call" as const,
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+        {
+          callId: "call-invalid",
+          description: "Research",
+          input: { message: 42 },
+          kind: "subagent-call" as const,
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+      ],
+      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+      responseMessages: [],
+      session: createBaseSession(),
+    });
+    installContext(session, {
+      definition: { description: "Research", kind: "subagent" },
+      nodeId: "subagents/research",
+    });
+    const writes: Uint8Array[] = [];
+
+    await expect(
+      dispatchRuntimeActionsStep({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(writes),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      }),
+    ).rejects.toThrow('Subagent action "call-invalid" input.message must be a string.');
+
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.dispatchSession).not.toHaveBeenCalled();
+    expect(mocks.startRemoteAgentSession).not.toHaveBeenCalled();
+    expect(mocks.continueRemoteAgentSession).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
   });
 
   it("opens a shared parent sandbox with session context and durable backend tags", async () => {
@@ -364,7 +465,8 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("records a tasks-mode child as an address and derives task identity separately", async () => {
-    const session = createStartSession({ kind: "local" });
+    const delegationMessage = "  background research\nwithout trimming  ";
+    const session = createStartSession({ delegationMessage, kind: "local" });
     installContext(
       session,
       { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
@@ -373,12 +475,13 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     vi.spyOn(taskRunControl, "sendTaskCommandToOwner").mockResolvedValue({
       runId: "task-run-1",
     });
+    const writes: Uint8Array[] = [];
 
     // Tasks-mode dispatch routes through dispatchTaskStep; the turn workflow
     // never sends `experimental.tasks` agents to dispatchRuntimeActionsStep.
     const result = await dispatchTaskStep({
       parentContinuationToken: "turn-inbox",
-      parentWritable: createWritable(),
+      parentWritable: createWritable(writes),
       serializedContext: {},
       sessionState: BASE_STATE,
     });
@@ -412,6 +515,60 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         taskRunId: "task-run-1",
       }),
     ]);
+    expect(readWrittenEvents(writes)).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ message: delegationMessage }),
+        type: "subagent.called",
+      }),
+    ]);
+  });
+
+  it("rejects an invalid tasks-mode message before creating any delegated task", async () => {
+    const session = setPendingRuntimeActionBatch({
+      actions: [
+        {
+          callId: "call-valid",
+          description: "Research",
+          input: { message: "valid" },
+          kind: "subagent-call" as const,
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+        {
+          callId: "call-invalid",
+          description: "Research",
+          input: {},
+          kind: "subagent-call" as const,
+          name: "research",
+          nodeId: "subagents/research",
+          subagentName: "research",
+        },
+      ],
+      event: { sequence: 1, stepIndex: 2, turnId: "turn-1" },
+      responseMessages: [],
+      session: createBaseSession(),
+    });
+    installContext(
+      session,
+      { definition: { description: "Research", kind: "subagent" }, nodeId: "subagents/research" },
+      true,
+    );
+    const writes: Uint8Array[] = [];
+
+    await expect(
+      dispatchTaskStep({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(writes),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      }),
+    ).rejects.toThrow('Subagent action "call-invalid" input.message must be a string.');
+
+    expect(mocks.startWorkflowPreferLatest).not.toHaveBeenCalled();
+    expect(mocks.resumeHook).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
   });
 
   it("silently rejects a tasks-mode start that failed before index admission", async () => {
@@ -538,18 +695,20 @@ describe("dispatchRuntimeActionsStep child starts", () => {
   });
 
   it("owns a remote child with its confirmed remote address", async () => {
-    const session = createStartSession({ kind: "remote" });
+    const delegationMessage = "  remote research\nwithout trimming  ";
+    const session = createStartSession({ delegationMessage, kind: "remote" });
     const traceId = "4".repeat(32);
     const actionSpanId = "5".repeat(16);
     installContext(session, {
       definition: REMOTE_REGISTRY_DEFINITION,
       nodeId: "remote/research",
     });
+    const writes: Uint8Array[] = [];
 
     const result = await dispatchRuntimeActionsStep({
       callbackBaseUrl: "https://caller.example.com",
       parentContinuationToken: "turn-inbox",
-      parentWritable: createWritable(),
+      parentWritable: createWritable(writes),
       serializedContext: {
         "eve.harness.agentTrace": {
           actions: {
@@ -577,6 +736,7 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     expect(result.results).toEqual([]);
     expect(mocks.startRemoteAgentSession).toHaveBeenCalledWith(
       expect.objectContaining({
+        delegationMessage,
         parentTraceContext: { isRemote: false, spanId: actionSpanId, traceFlags: 1, traceId },
       }),
     );
@@ -593,6 +753,12 @@ describe("dispatchRuntimeActionsStep child starts", () => {
         }),
       ],
     });
+    expect(readWrittenEvents(writes)).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ message: delegationMessage }),
+        type: "subagent.called",
+      }),
+    ]);
   });
 
   it("rejects the prepared handle when the remote start fails", async () => {
@@ -800,7 +966,12 @@ describe("dispatchRuntimeActionsStep agent delivery", () => {
         },
       ],
     });
-    expect(writes).toHaveLength(1);
+    expect(readWrittenEvents(writes)).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ message: "continue with raw input" }),
+        type: "subagent.called",
+      }),
+    ]);
   });
 
   it.each([
@@ -996,6 +1167,38 @@ describe("dispatchRuntimeActionsStep agent delivery", () => {
     });
   });
 
+  it("continues a stored remote handle with the exact message in delivery and telemetry", async () => {
+    const delegationMessage = "  continue remotely\nwithout trimming  ";
+    const session = createPendingSession({
+      handle: REMOTE_PARKED_HANDLE,
+      agentId: REMOTE_PARKED_HANDLE.identity.id,
+      message: delegationMessage,
+    });
+    installContext(session, {
+      definition: REMOTE_REGISTRY_DEFINITION,
+      nodeId: REMOTE_PARKED_HANDLE.identity.nodeId,
+    });
+    const writes: Uint8Array[] = [];
+
+    const result = await dispatchRuntimeActionsStep({
+      parentContinuationToken: "turn-inbox",
+      parentWritable: createWritable(writes),
+      serializedContext: {},
+      sessionState: BASE_STATE,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(mocks.continueRemoteAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({ message: delegationMessage }),
+    );
+    expect(readWrittenEvents(writes)).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ message: delegationMessage }),
+        type: "subagent.called",
+      }),
+    ]);
+  });
+
   it("surfaces a transient remote continue failure without retrying and restores the parked handle", async () => {
     const session = createPendingSession({
       handle: REMOTE_PARKED_HANDLE,
@@ -1087,6 +1290,7 @@ function createBaseSession(handle?: AgentHandle): HarnessSession {
 }
 
 function createStartSession(input: {
+  readonly delegationMessage?: string;
   readonly event?: {
     readonly sequence: number;
     readonly stepIndex: number;
@@ -1094,13 +1298,14 @@ function createStartSession(input: {
   };
   readonly kind: "local" | "remote";
 }): HarnessSession {
+  const message = input.delegationMessage ?? "research this";
   return setPendingRuntimeActionBatch({
     actions: [
       input.kind === "local"
         ? {
             callId: "call-1",
             description: "Research",
-            input: { message: "research this" },
+            input: { message },
             kind: "subagent-call",
             name: "research",
             nodeId: "subagents/research",
@@ -1109,7 +1314,7 @@ function createStartSession(input: {
         : {
             callId: "call-1",
             description: "Research",
-            input: { message: "research this" },
+            input: { message },
             kind: "remote-agent-call",
             name: "research",
             nodeId: "remote/research",
@@ -1148,13 +1353,14 @@ function createNamedStartSession(input: {
 function createPendingSession(input: {
   readonly handle?: AgentHandle;
   readonly agentId: string | null;
+  readonly message?: string;
 }): HarnessSession {
   return setPendingRuntimeActionBatch({
     actions: [
       {
         callId: "call-1",
         description: "Research",
-        input: { agentId: input.agentId, message: "continue with raw input" },
+        input: { agentId: input.agentId, message: input.message ?? "continue with raw input" },
         kind: "subagent-call",
         name: "research",
         nodeId: "subagents/research",
@@ -1300,4 +1506,16 @@ function createWritable(writes: Uint8Array[] = []): WritableStream<Uint8Array> {
       writes.push(chunk);
     },
   });
+}
+
+function readWrittenEvents(
+  writes: readonly Uint8Array[],
+): Array<{ readonly data: Record<string, unknown>; readonly type: string }> {
+  return writes.map(
+    (chunk) =>
+      JSON.parse(new TextDecoder().decode(chunk).trim()) as {
+        readonly data: Record<string, unknown>;
+        readonly type: string;
+      },
+  );
 }

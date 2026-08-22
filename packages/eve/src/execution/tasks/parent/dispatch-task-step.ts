@@ -140,6 +140,7 @@ export async function dispatchTaskStep(
               dynamicRemoteAgent: entry.dynamicRemoteAgent,
             }),
             currentSession: nextSession,
+            delegationMessage: entry.delegationMessage,
             parentToken: delegated.taskInboxToken,
           });
           break;

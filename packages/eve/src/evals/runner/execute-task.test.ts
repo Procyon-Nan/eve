@@ -853,6 +853,7 @@ function subagentCalled(
       callId: "call_subagent",
       childSessionId,
       childStreamPath: `/eve/v1/session/${encodeURIComponent(childSessionId)}/stream`,
+      message: "research this",
       sessionId: "parent-session",
       sequence: 1,
       name,

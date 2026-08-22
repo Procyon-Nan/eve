@@ -25,6 +25,7 @@ export async function startRemoteSubagent(input: {
   readonly bundle: CompiledBundle;
   readonly callbackBaseUrl: string | undefined;
   readonly currentSession: RuntimeSession;
+  readonly delegationMessage: string;
   readonly dynamicRemoteAgent?: NonNullable<
     Parameters<typeof resolveRemoteAgentForAction>[0]["dynamicRemoteAgent"]
   >;
@@ -84,6 +85,7 @@ export async function startRemoteSubagent(input: {
       auth: input.auth,
       callbackBaseUrl,
       callbackToken: input.parentContinuationToken,
+      delegationMessage: input.delegationMessage,
       initiatorAuth: input.initiatorAuth,
       operationId: operation.id,
       parentTraceContext: input.parentTraceContext,
@@ -101,6 +103,7 @@ export async function startRemoteSubagent(input: {
       address,
       callId: action.callId,
       kind: "called",
+      message: input.delegationMessage,
       name: action.name,
       session: input.taskOwned
         ? confirmTaskAgentAddress(preparedSession, { address, operationId: operation.id })

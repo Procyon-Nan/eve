@@ -30,6 +30,7 @@ export async function startLocalSubagent(input: {
   readonly capabilities: Parameters<typeof buildSubagentRunInput>[0]["capabilities"];
   readonly channelMetadata: Parameters<typeof buildSubagentRunInput>[0]["channelMetadata"];
   readonly currentSession: RuntimeSession;
+  readonly delegationMessage: string;
   readonly dynamicSubagentAgentConfig?: DynamicSubagentAgentConfig;
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
@@ -53,6 +54,7 @@ export async function startLocalSubagent(input: {
     batchEvent: input.batchEvent,
     capabilities: input.capabilities,
     channelMetadata: input.channelMetadata,
+    delegationMessage: input.delegationMessage,
     fanoutSize: input.fanoutSize,
     initiatorAuth: input.initiatorAuth,
     graph: input.bundle.graph,
@@ -129,6 +131,7 @@ export async function startLocalSubagent(input: {
     address,
     callId: action.callId,
     kind: "called",
+    message: input.delegationMessage,
     name: action.name,
     session: input.taskOwned
       ? confirmTaskAgentAddress(preparedSession, { address, operationId: operation.id })
