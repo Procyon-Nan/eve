@@ -328,6 +328,7 @@ export interface ResolvedDynamicSubagentDefinition extends Readonly<ModuleSource
   readonly events: Readonly<
     Record<string, (event: unknown, ctx: unknown) => unknown | Promise<unknown>>
   >;
+  readonly runtime?: import("#shared/host-runtime.js").HostRuntimeDefinition;
 }
 
 /**

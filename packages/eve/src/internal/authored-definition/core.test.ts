@@ -6,10 +6,72 @@ import {
   normalizeScheduleDefinition,
 } from "#internal/authored-definition/core.js";
 import { defineDynamic } from "#public/definitions/tool.js";
+import { defineHostRuntime } from "#public/definitions/agent.js";
 
 const FAILURE_MESSAGE = "Expected the agent config to match the public eve shape.";
 
 describe("normalizeAgentDefinition", () => {
+  it("allows host runtime only for the explicit specialist normalization path", () => {
+    const runtime = defineHostRuntime({ providerKind: "baigong-agent" });
+
+    expect(() =>
+      normalizeAgentDefinition({ description: "Review work.", runtime }, FAILURE_MESSAGE),
+    ).toThrow('Unknown key "runtime"');
+    expect(
+      normalizeAgentDefinition({ description: "Review work.", runtime }, FAILURE_MESSAGE, {
+        allowHostRuntime: true,
+      }),
+    ).toEqual({ description: "Review work.", runtime });
+  });
+
+  it("rejects model-owned fields on a host-runtime specialist", () => {
+    const runtime = defineHostRuntime({ providerKind: "baigong-agent" });
+
+    expect(() =>
+      normalizeAgentDefinition(
+        { description: "Review work.", model: "openai/gpt-5.5", runtime },
+        FAILURE_MESSAGE,
+        { allowHostRuntime: true },
+      ),
+    ).toThrow(/model.*runtime.*cannot be combined/);
+    expect(() =>
+      normalizeAgentDefinition(
+        {
+          compaction: { model: "openai/gpt-5.5" },
+          description: "Review work.",
+          runtime,
+        },
+        FAILURE_MESSAGE,
+        { allowHostRuntime: true },
+      ),
+    ).toThrow(/cannot declare a compaction model or model context window/);
+    expect(() =>
+      normalizeAgentDefinition(
+        {
+          compaction: { modelContextWindowTokens: 200_000 },
+          description: "Review work.",
+          runtime,
+        },
+        FAILURE_MESSAGE,
+        { allowHostRuntime: true },
+      ),
+    ).toThrow(/cannot declare a compaction model or model context window/);
+    expect(() =>
+      normalizeAgentDefinition(
+        { description: "Review work.", modelContextWindowTokens: 200_000, runtime },
+        FAILURE_MESSAGE,
+        { allowHostRuntime: true },
+      ),
+    ).toThrow(/cannot declare a model context window/);
+    expect(() =>
+      normalizeAgentDefinition(
+        { description: "Review work.", modelOptions: {}, runtime },
+        FAILURE_MESSAGE,
+        { allowHostRuntime: true },
+      ),
+    ).toThrow(/cannot declare model options/);
+  });
+
   it("accepts provider-agnostic reasoning effort", () => {
     const definition = normalizeAgentDefinition(
       {

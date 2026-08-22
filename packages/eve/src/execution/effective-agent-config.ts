@@ -33,6 +33,10 @@ export function resolveEffectiveAgentRuntimeFromConfig(
     };
   }
 
+  if (config.runtime !== undefined) {
+    throw new Error("Host-runtime specialist execution requires a resolved runtime preflight.");
+  }
+
   const {
     compactionModel: _compiledCompactionModel,
     configResolver: _configResolver,

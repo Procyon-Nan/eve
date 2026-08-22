@@ -24,6 +24,7 @@ import {
   type PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
+import { isRuntimeLanguageModel } from "#shared/runtime-language-model.js";
 import {
   createRuntimeModelCatalog,
   type RuntimeModelCatalog,
@@ -324,30 +325,6 @@ function validateRuntimeLanguageModel(model: unknown): asserts model is Language
       "Dynamic model resolver returned an invalid model. Return an AI Gateway model id string, an AI SDK language model, or { model, modelContextWindowTokens?, modelOptions? }.",
     );
   }
-}
-
-export function isRuntimeLanguageModel(value: unknown): value is LanguageModel {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const model = value as {
-    specificationVersion?: unknown;
-    provider?: unknown;
-    modelId?: unknown;
-    doGenerate?: unknown;
-    doStream?: unknown;
-  };
-
-  return (
-    (model.specificationVersion === "v2" ||
-      model.specificationVersion === "v3" ||
-      model.specificationVersion === "v4") &&
-    typeof model.provider === "string" &&
-    typeof model.modelId === "string" &&
-    typeof model.doGenerate === "function" &&
-    typeof model.doStream === "function"
-  );
 }
 
 function parseProviderOptionsRecord(

@@ -3,7 +3,7 @@ import { z as z3 } from "zod/v3";
 
 import { z } from "#compiled/zod/index.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
-import { defineAgent, defineDynamic } from "#public/definitions/agent.js";
+import { defineAgent, defineDynamic, defineHostRuntime } from "#public/definitions/agent.js";
 import { defineRemoteAgent } from "#public/definitions/remote-agent.js";
 import { none } from "#public/channels/auth.js";
 import { eveChannel, defaultEveAuth } from "#public/channels/eve.js";
@@ -104,6 +104,71 @@ describe("definition helper exact inputs", () => {
 });
 
 function typeOnlyFixtures(): void {
+  const hostRuntime = defineHostRuntime({ providerKind: "baigong-agent" });
+
+  defineDynamic({
+    runtime: hostRuntime,
+    events: {
+      "turn.started": () =>
+        defineAgent({
+          compaction: { thresholdPercent: 0.8 },
+          description: "Review delegated work.",
+          runtime: hostRuntime,
+        }),
+    },
+  });
+
+  // @ts-expect-error A host-runtime result requires the same declaration on defineDynamic.
+  defineDynamic({
+    events: {
+      "turn.started": () =>
+        defineAgent({ description: "Review delegated work.", runtime: hostRuntime }),
+    },
+  });
+
+  // @ts-expect-error Host-runtime dynamic subagents are turn-scoped only.
+  defineDynamic({
+    runtime: hostRuntime,
+    events: {
+      "session.started": () =>
+        defineAgent({ description: "Review delegated work.", runtime: hostRuntime }),
+    },
+  });
+
+  defineDynamic({
+    // @ts-expect-error A static-model result cannot declare a host runtime on defineDynamic.
+    runtime: hostRuntime,
+    events: {
+      "turn.started": () =>
+        defineAgent({ description: "Review delegated work.", model: "openai/gpt-5.5" }),
+    },
+  });
+
+  defineAgent({
+    description: "Review delegated work.",
+    model: "openai/gpt-5.5",
+    // @ts-expect-error Host-runtime specialists cannot also declare a model.
+    runtime: hostRuntime,
+  });
+
+  // @ts-expect-error Host-runtime specialists cannot declare a compaction model.
+  defineAgent({
+    compaction: {
+      model: "openai/gpt-5.5",
+    },
+    description: "Review delegated work.",
+    runtime: hostRuntime,
+  });
+
+  // @ts-expect-error Host-runtime specialists cannot declare a compaction context window.
+  defineAgent({
+    compaction: {
+      modelContextWindowTokens: 200_000,
+    },
+    description: "Review delegated work.",
+    runtime: hostRuntime,
+  });
+
   defineDynamic({
     // @ts-expect-error defineDynamic is resolver-only.
     fallback: "anthropic/claude-sonnet-5",

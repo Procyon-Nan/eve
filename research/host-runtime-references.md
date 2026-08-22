@@ -205,7 +205,7 @@ The checklist is authoritative for this branch. Each implementation phase update
 the same commit as its code.
 
 - [x] Phase 0: Audit eve 0.40 boundaries and land this execution plan.
-- [ ] Phase 1: Add contracts, validation, errors, provider registration, and specialist authoring
+- [x] Phase 1: Add contracts, validation, errors, provider registration, and specialist authoring
       types.
 - [ ] Phase 2: Add trusted root-turn ingress, atomic durable acceptance, and the status probe.
 - [ ] Phase 3: Add unified preflight, model/instruction/tool composition, and model-call timeout.

@@ -27,6 +27,7 @@ import {
   expectString,
 } from "#internal/authored-module.js";
 import { EVE_SESSION_ROUTE_PATH } from "#protocol/routes.js";
+import { validateHostRuntimeDefinition } from "#runtime/host-runtime/validation.js";
 import { serializeOutputSchema, type ToolSchemaSource } from "#shared/tool-schema.js";
 import type { JsonObject } from "#shared/json.js";
 import { isDynamicSentinel, type DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
@@ -337,10 +338,12 @@ function normalizeDynamicSubagentDefinition(
   }
 
   const record = expectObjectRecord(value, message);
-  expectOnlyKnownKeys(record, ["build", "events", "kind"], message);
+  expectOnlyKnownKeys(record, ["build", "events", "kind", "runtime"], message);
 
   const build =
     record.build === undefined ? undefined : normalizeDynamicSubagentBuild(record.build, message);
+  const runtime =
+    record.runtime === undefined ? undefined : validateHostRuntimeDefinition(record.runtime);
   const rawEvents = expectObjectRecord(record.events, message);
   const eventNames: DynamicToolEventName[] = [];
 
@@ -352,6 +355,10 @@ function normalizeDynamicSubagentDefinition(
     }
     expectFunction(handler, message);
     eventNames.push(eventName as DynamicToolEventName);
+  }
+
+  if (runtime !== undefined && eventNames.some((eventName) => eventName !== "turn.started")) {
+    throw new Error(`${message} Host-runtime subagents may only handle turn.started.`);
   }
 
   const normalized: {

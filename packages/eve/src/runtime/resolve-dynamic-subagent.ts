@@ -8,6 +8,7 @@ import {
 import { loadResolvedModuleExport, ResolveAgentError } from "#runtime/resolve-helpers.js";
 import type { ResolvedDynamicSubagentDefinition } from "#runtime/types.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { validateHostRuntimeDefinition } from "#runtime/host-runtime/validation.js";
 
 export async function resolveDynamicSubagentDefinition(input: {
   readonly definition: CompiledDynamicSubagentDefinition;
@@ -43,19 +44,24 @@ export function normalizeResolvedDynamicSubagentDefinition(
 ): ResolvedDynamicSubagentDefinition {
   const message = `Expected the dynamic subagent export "${definition.exportName ?? "default"}" from "${definition.logicalPath}" to provide defineDynamic({ events }).`;
   const record = expectObjectRecord(value, message);
-  expectOnlyKnownKeys(record, ["build", "events", "kind"], message);
+  expectOnlyKnownKeys(record, ["build", "events", "kind", "runtime"], message);
 
   if (record.kind !== "eve:dynamic") {
     throw new Error(message);
   }
 
   const eventMap = expectObjectRecord(record.events, message);
+  const runtime =
+    record.runtime === undefined ? undefined : validateHostRuntimeDefinition(record.runtime);
+  if (runtime !== undefined && definition.eventNames.some((name) => name !== "turn.started")) {
+    throw new Error(`${message} Host-runtime subagents may only handle turn.started.`);
+  }
   const events: Record<string, Function> = {};
   for (const eventName of definition.eventNames) {
     events[eventName] = expectFunction(eventMap[eventName], message);
   }
 
-  return {
+  const result: ResolvedDynamicSubagentDefinition = {
     eventNames: [...definition.eventNames],
     events: events as ResolvedDynamicSubagentDefinition["events"],
     exportName: definition.exportName,
@@ -63,4 +69,6 @@ export function normalizeResolvedDynamicSubagentDefinition(
     sourceId: definition.sourceId,
     sourceKind: "module",
   };
+  if (runtime !== undefined) Object.assign(result, { runtime });
+  return result;
 }

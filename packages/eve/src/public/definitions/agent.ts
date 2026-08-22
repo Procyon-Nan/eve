@@ -1,12 +1,18 @@
 import type {
   AgentBuildDefinition,
   PublicAgentDefinition,
+  PublicHostRuntimeAgentDefinition,
   PublicAgentStaticModelDefinition,
 } from "#shared/agent-definition.js";
 import type { ExactDefinition } from "#public/definitions/exact.js";
 import type { RemoteAgentDefinition } from "#public/definitions/remote-agent.js";
 import { defineDynamic as defineDynamicBase } from "#public/definitions/tool.js";
 import type { DynamicEvents, DynamicSentinel } from "#shared/dynamic-tool-definition.js";
+import { HOST_RUNTIME_DEFINITION_KIND, type HostRuntimeDefinition } from "#shared/host-runtime.js";
+import {
+  validateHostRuntimeDefinition,
+  validateProviderKind,
+} from "#runtime/host-runtime/validation.js";
 
 declare const DEFINED_AGENT: unique symbol;
 
@@ -40,19 +46,29 @@ export type {
  */
 export type AgentDefinition = PublicAgentDefinition;
 
+/** Runtime-complete local specialist definition selected at turn scope. */
+export type HostRuntimeAgentDefinition = PublicHostRuntimeAgentDefinition & {
+  readonly description: string;
+};
+
 /** Literal-preserving value returned by {@link defineAgent}. */
-export type DefinedAgent<TAgent extends AgentDefinition = AgentDefinition> = TAgent & {
+export type DefinedAgent<
+  TAgent extends AgentDefinition | HostRuntimeAgentDefinition = AgentDefinition,
+> = TAgent & {
   readonly [DEFINED_AGENT]: true;
 };
+
+type AnyDefinedAgent = DefinedAgent<AgentDefinition | HostRuntimeAgentDefinition>;
 
 /**
  * Agent configuration returned by a dynamic subagent resolver. The description
  * tells the parent agent when to delegate.
  */
-export type DynamicLocalSubagentDefinition = Extract<
-  AgentDefinition,
-  { readonly model: PublicAgentStaticModelDefinition }
-> & { readonly description: string };
+export type DynamicLocalSubagentDefinition =
+  | (Extract<AgentDefinition, { readonly model: PublicAgentStaticModelDefinition }> & {
+      readonly description: string;
+    })
+  | HostRuntimeAgentDefinition;
 
 /** Definition a dynamic subagent resolver may select at runtime. */
 export type DynamicSubagentDefinition = DynamicLocalSubagentDefinition | RemoteAgentDefinition;
@@ -66,19 +82,32 @@ type DynamicEventResult<TEvents extends DynamicEvents> = Awaited<
 >;
 type DynamicSubagentDescriptionConstraint<TEvents extends DynamicEvents> =
   Exclude<
-    Extract<DynamicEventResult<TEvents>, DefinedAgent>,
+    Extract<DynamicEventResult<TEvents>, AnyDefinedAgent>,
     DynamicLocalSubagentDefinition
   > extends never
     ? unknown
     : { readonly "Dynamic subagent definitions require a description": never };
+type DynamicHostRuntimeConstraint<TEvents extends DynamicEvents> =
+  Extract<
+    Extract<DynamicEventResult<TEvents>, AnyDefinedAgent>,
+    HostRuntimeAgentDefinition
+  > extends never
+    ? { readonly runtime?: never }
+    : Exclude<keyof TEvents, "turn.started"> extends never
+      ? { readonly runtime: HostRuntimeDefinition }
+      : {
+          readonly runtime: HostRuntimeDefinition;
+          readonly "Host-runtime subagents may only handle turn.started": never;
+        };
 
 interface DefineDynamicAgent {
   <const TEvents extends DynamicEvents>(
     definition: {
       readonly build?: AgentBuildDefinition;
       readonly events: TEvents;
-    } & DynamicSubagentDescriptionConstraint<TEvents>,
-  ): DynamicSentinel<DynamicEventResult<TEvents>>;
+    } & DynamicSubagentDescriptionConstraint<TEvents> &
+      DynamicHostRuntimeConstraint<TEvents>,
+  ): DynamicSentinel<DynamicEventResult<TEvents>> & { readonly runtime?: HostRuntimeDefinition };
 }
 
 /**
@@ -89,9 +118,15 @@ interface DefineDynamicAgent {
 export const defineDynamic: DefineDynamicAgent = ((definition: {
   readonly build?: AgentBuildDefinition;
   readonly events: DynamicEvents;
+  readonly runtime?: HostRuntimeDefinition;
 }) => {
   const sentinel = defineDynamicBase({ events: definition.events });
-  return definition.build === undefined ? sentinel : { ...sentinel, build: definition.build };
+  const result: Record<string, unknown> = { ...sentinel };
+  if (definition.build !== undefined) result.build = definition.build;
+  if (definition.runtime !== undefined) {
+    result.runtime = validateHostRuntimeDefinition(definition.runtime);
+  }
+  return result;
 }) as DefineDynamicAgent;
 
 /**
@@ -106,6 +141,24 @@ export const defineDynamic: DefineDynamicAgent = ((definition: {
 export function defineAgent<TAgent extends AgentDefinition>(
   definition: ExactDefinition<TAgent, AgentDefinition>,
 ): DefinedAgent<TAgent>;
-export function defineAgent(definition: AgentDefinition): AgentDefinition {
+export function defineAgent<TAgent extends HostRuntimeAgentDefinition>(
+  definition: ExactDefinition<TAgent, HostRuntimeAgentDefinition>,
+): DefinedAgent<TAgent>;
+export function defineAgent<TAgent extends AgentDefinition | HostRuntimeAgentDefinition>(
+  definition: TAgent extends HostRuntimeAgentDefinition
+    ? ExactDefinition<TAgent, HostRuntimeAgentDefinition>
+    : ExactDefinition<TAgent, AgentDefinition>,
+): DefinedAgent<TAgent>;
+export function defineAgent(
+  definition: AgentDefinition | HostRuntimeAgentDefinition,
+): AgentDefinition | HostRuntimeAgentDefinition {
   return definition;
+}
+
+/** Declares that a dynamic local specialist obtains its runtime from the host. */
+export function defineHostRuntime(input: { readonly providerKind: string }): HostRuntimeDefinition {
+  return {
+    kind: HOST_RUNTIME_DEFINITION_KIND,
+    providerKind: validateProviderKind(input.providerKind),
+  };
 }

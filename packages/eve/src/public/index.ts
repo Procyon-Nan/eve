@@ -16,9 +16,26 @@ export {
   type DefinedAgent,
   type DynamicSubagentDefinition,
   type DynamicLocalSubagentDefinition,
+  type HostRuntimeAgentDefinition,
   defineAgent,
   defineDynamic,
+  defineHostRuntime,
 } from "#public/definitions/agent.js";
+export { type HostRuntimeErrorCode, HostRuntimeError } from "#runtime/host-runtime/errors.js";
+export { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
+export type {
+  HostRuntimeAcceptanceStatus,
+  HostRuntimeDefinition,
+  HostRuntimeParentLineage,
+  HostRuntimeProvider,
+  HostRuntimeReference,
+  HostRuntimeReleaseInput,
+  HostRuntimeReleaseOutcome,
+  HostRuntimeResolveInput,
+  ResolvedHostRuntime,
+  SpecialistReferenceFactoryInput,
+  TrustedHostRuntimeInput,
+} from "#shared/host-runtime.js";
 export type { DynamicResolveContext, DynamicSentinel } from "#shared/dynamic-tool-definition.js";
 export {
   type RemoteAgentDefinition,

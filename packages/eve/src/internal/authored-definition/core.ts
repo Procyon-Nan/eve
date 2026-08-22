@@ -15,6 +15,8 @@ import {
   getOptionalStringRecordProperty,
 } from "#internal/authored-module.js";
 import type { PublicAgentStaticModelDefinition } from "#shared/agent-definition.js";
+import type { HostRuntimeDefinition } from "#shared/host-runtime.js";
+import { validateHostRuntimeDefinition } from "#runtime/host-runtime/validation.js";
 import {
   isDynamicSentinel,
   type DynamicEvents,
@@ -26,10 +28,35 @@ type MutableDynamicEvents = {
   -readonly [K in DynamicToolEventName]?: DynamicEvents[DynamicToolEventName];
 };
 
-type NormalizedAgentDefinition = Omit<AgentDefinition, "build"> & {
+type NormalizedAgentDefinitionBase = Omit<
+  AgentDefinition,
+  "build" | "model" | "modelContextWindowTokens" | "modelOptions"
+> & {
   build?: {
     externalDependencies?: Readonly<AgentBuildDefinition["externalDependencies"]>;
   };
+};
+
+type NormalizedModelAgentDefinition = NormalizedAgentDefinitionBase & {
+  model: AgentDefinition["model"];
+  modelContextWindowTokens?: number;
+  modelOptions?: AgentDefinition["modelOptions"];
+  runtime?: never;
+};
+
+type NormalizedHostRuntimeAgentDefinition = NormalizedAgentDefinitionBase & {
+  model?: never;
+  modelContextWindowTokens?: never;
+  modelOptions?: never;
+  runtime: HostRuntimeDefinition;
+};
+
+type NormalizedAgentDefinition =
+  | NormalizedModelAgentDefinition
+  | NormalizedHostRuntimeAgentDefinition;
+
+type NormalizeAgentDefinitionOptions = {
+  readonly allowHostRuntime: true;
 };
 
 /**
@@ -41,6 +68,16 @@ type NormalizedAgentDefinition = Omit<AgentDefinition, "build"> & {
 export function normalizeAgentDefinition(
   value: unknown,
   message: string,
+): Readonly<NormalizedModelAgentDefinition>;
+export function normalizeAgentDefinition(
+  value: unknown,
+  message: string,
+  options: NormalizeAgentDefinitionOptions,
+): Readonly<NormalizedAgentDefinition>;
+export function normalizeAgentDefinition(
+  value: unknown,
+  message: string,
+  options?: NormalizeAgentDefinitionOptions,
 ): Readonly<NormalizedAgentDefinition> {
   const record = expectObjectRecord(value, message);
   expectOnlyKnownKeys(
@@ -56,18 +93,31 @@ export function normalizeAgentDefinition(
       "modelOptions",
       "outputSchema",
       "reasoning",
+      ...(options?.allowHostRuntime === true ? ["runtime"] : []),
     ],
     message,
   );
-  if (record.model === undefined) {
+  if (record.model === undefined && record.runtime === undefined) {
     throw new Error(`${message} The "model" field is required.`);
   }
+  if (record.model !== undefined && record.runtime !== undefined) {
+    throw new Error(`${message} The "model" and "runtime" fields cannot be combined.`);
+  }
 
-  const definition: Mutable<NormalizedAgentDefinition> = {
-    model: normalizeAgentModelDefinition(record.model, message),
-  };
+  const definition: Mutable<NormalizedAgentDefinitionBase> & {
+    model?: AgentDefinition["model"];
+    modelContextWindowTokens?: number;
+    modelOptions?: AgentDefinition["modelOptions"];
+    runtime?: HostRuntimeDefinition;
+  } = {};
+  if (record.runtime === undefined) {
+    definition.model = normalizeAgentModelDefinition(record.model, message);
+  } else {
+    definition.runtime = validateHostRuntimeDefinition(record.runtime);
+  }
 
   if (
+    definition.model !== undefined &&
     isDynamicSentinel(definition.model) &&
     (record.modelContextWindowTokens !== undefined || record.modelOptions !== undefined)
   ) {
@@ -82,6 +132,15 @@ export function normalizeAgentDefinition(
 
   if (record.compaction !== undefined) {
     definition.compaction = normalizeAgentCompactionDefinition(record.compaction, message);
+    if (
+      record.runtime !== undefined &&
+      (definition.compaction.model !== undefined ||
+        definition.compaction.modelContextWindowTokens !== undefined)
+    ) {
+      throw new Error(
+        `${message} Host runtime agents cannot declare a compaction model or model context window.`,
+      );
+    }
   }
 
   if (record.build !== undefined) {
@@ -93,10 +152,16 @@ export function normalizeAgentDefinition(
   }
 
   if (record.modelOptions !== undefined) {
+    if (record.runtime !== undefined) {
+      throw new Error(`${message} Host runtime agents cannot declare model options.`);
+    }
     definition.modelOptions = normalizeAgentModelOptions(record.modelOptions, message);
   }
 
   if (record.modelContextWindowTokens !== undefined) {
+    if (record.runtime !== undefined) {
+      throw new Error(`${message} Host runtime agents cannot declare a model context window.`);
+    }
     definition.modelContextWindowTokens = expectPositiveInteger(
       record.modelContextWindowTokens,
       message,
@@ -138,12 +203,9 @@ function normalizeAgentReasoningDefinition(
   }
 }
 
-function normalizeAgentModelDefinition(
-  value: unknown,
-  message: string,
-): NormalizedAgentDefinition["model"] {
+function normalizeAgentModelDefinition(value: unknown, message: string): AgentDefinition["model"] {
   if (!isDynamicSentinel(value)) {
-    return value as NormalizedAgentDefinition["model"];
+    return value as AgentDefinition["model"];
   }
 
   const record = expectObjectRecord(value, message);
@@ -160,7 +222,7 @@ function normalizeAgentModelDefinition(
   return {
     events,
     kind: record.kind,
-  } as NormalizedAgentDefinition["model"];
+  } as AgentDefinition["model"];
 }
 
 /** `false` explicitly disables one numeric runtime limit. */

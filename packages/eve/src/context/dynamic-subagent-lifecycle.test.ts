@@ -126,7 +126,9 @@ describe("dynamic subagent lifecycle", () => {
     const sessionSelection = getDynamicSubagentSelection(ctx, resolver.nodeId);
     expect(sessionSelection?.kind).toBe("subagent");
     expect(
-      sessionSelection?.kind === "subagent" ? sessionSelection.agentConfig.model.id : null,
+      sessionSelection?.kind === "subagent" && sessionSelection.agentConfig.model !== undefined
+        ? sessionSelection.agentConfig.model.id
+        : null,
     ).toBe("anthropic/claude-sonnet-4.5");
 
     await dispatchDynamicSubagentEvent({

@@ -2,6 +2,7 @@ import type { CallSettings, LanguageModel } from "ai";
 import type { StandardJSONSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 import type { JsonObject } from "#shared/json.js";
 import type { ModuleSourceRef } from "#shared/source-ref.js";
+import type { HostRuntimeDefinition } from "#shared/host-runtime.js";
 import {
   isDynamicSentinel,
   type DynamicResolveContext,
@@ -336,3 +337,18 @@ export type PublicAgentDefinition = PublicAgentDefinitionBase &
         readonly modelOptions?: never;
       }
   );
+
+/** Dynamic local specialist whose complete model runtime is supplied by its host. */
+export type PublicHostRuntimeAgentDefinition = Omit<PublicAgentDefinitionBase, "compaction"> & {
+  readonly compaction?: Omit<
+    PublicAgentCompactionDefinition,
+    "model" | "modelContextWindowTokens"
+  > & {
+    readonly model?: never;
+    readonly modelContextWindowTokens?: never;
+  };
+  readonly model?: never;
+  readonly modelContextWindowTokens?: never;
+  readonly modelOptions?: never;
+  readonly runtime: HostRuntimeDefinition;
+};
