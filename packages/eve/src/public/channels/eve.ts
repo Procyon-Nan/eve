@@ -11,6 +11,7 @@ import type { ClearResponse } from "#protocol/clear-session.js";
 import type { CompactResponse } from "#protocol/compact-session.js";
 import type { ResetResponse } from "#protocol/reset-session.js";
 import type { Session } from "#channel/session.js";
+import { attachHostRuntimeDeliveryOptions } from "#channel/session.js";
 import { resolveForwardedPrincipal, type TrustedForwarders } from "#channel/forwarded-principal.js";
 import { parseSessionCallback } from "#channel/session-callback.js";
 import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
@@ -35,6 +36,7 @@ import {
 import { parseTraceparent } from "#protocol/traceparent.js";
 import {
   EVE_INFO_ROUTE_PATH,
+  EVE_HOST_RUNTIME_ACCEPTANCE_ROUTE_PATTERN,
   EVE_SESSION_ROUTE_PATH,
   EVE_SESSION_CANCEL_ROUTE_PATTERN,
   EVE_SESSION_CLEAR_ROUTE_PATTERN,
@@ -67,6 +69,14 @@ import {
 import type { ChannelMethod } from "#public/definitions/channel.js";
 import type { RunMode } from "#shared/run-mode.js";
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
+import {
+  HostRuntimeAcceptanceIndeterminateError,
+  beginHostRuntimeAcceptance,
+  queryHostRuntimeAcceptance,
+  recordHostRuntimeAcceptance,
+} from "#runtime/host-runtime/acceptance.js";
+import { readTrustedHostRuntime } from "#runtime/host-runtime/trusted-auth.js";
 
 const log = createLogger("eve.channel");
 
@@ -207,6 +217,11 @@ export interface EveChannelInput {
  */
 export interface EveChannel extends Channel {}
 
+type RootHostRuntimeContext = DurableHostRuntimeContext & {
+  readonly acceptanceKey: string;
+  readonly ownership: "root";
+};
+
 /**
  * Builds the default eve HTTP channel: a {@link defineChannel} instance serving the
  * built-in `/eve/v1` routes (GET inspects the agent, POST creates a session,
@@ -223,6 +238,36 @@ export function eveChannel(input: EveChannelInput): EveChannel {
     cors: normalizeEveCors(input.cors),
     turnPolicy: input.turnPolicy,
     routes: [
+      GET(EVE_HOST_RUNTIME_ACCEPTANCE_ROUTE_PATTERN, async (req, { params }) => {
+        const authResult = await routeAuth(req, input.auth);
+        if (authResult instanceof Response) return authResult;
+        const trusted = readTrustedHostRuntime(authResult);
+        const acceptanceKey = params.acceptanceKey;
+        if (
+          trusted === undefined ||
+          acceptanceKey === undefined ||
+          trusted.acceptanceKey !== acceptanceKey
+        ) {
+          return Response.json(
+            { code: "forbidden", error: "The acceptance probe is not authorized.", ok: false },
+            { headers: { "cache-control": "no-store" }, status: 403 },
+          );
+        }
+        try {
+          const status = await queryHostRuntimeAcceptance(acceptanceKey);
+          return Response.json({ ok: true, status }, { headers: { "cache-control": "no-store" } });
+        } catch (error) {
+          if (!(error instanceof HostRuntimeAcceptanceIndeterminateError)) throw error;
+          return Response.json(
+            {
+              code: "acceptance_state_unavailable",
+              error: "The acceptance state is temporarily unavailable.",
+              ok: false,
+            },
+            { headers: { "cache-control": "no-store", "retry-after": "1" }, status: 503 },
+          );
+        }
+      }),
       GET(EVE_INFO_ROUTE_PATH, async (req, args) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
@@ -241,21 +286,23 @@ export function eveChannel(input: EveChannelInput): EveChannel {
       POST(EVE_SESSION_ROUTE_PATH, async (req, args) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
+        const hostRuntime = await resolveTrustedRootHostRuntime(authResult);
+        if (hostRuntime instanceof Response) return hostRuntime;
 
         const payload = await parseJsonRequest(req);
-        if (payload instanceof Response) return payload;
+        if (payload instanceof Response) return await rejectHostRuntime(hostRuntime, payload);
         const tokenRejection = rejectSessionContinuationToken(payload);
-        if (tokenRejection !== null) return tokenRejection;
+        if (tokenRejection !== null) return await rejectHostRuntime(hostRuntime, tokenRejection);
 
         const forwarded = await resolveForwardedPrincipal({
           trustedForwarders: input.trustedForwarders,
           forwarder: authResult,
           payload,
         });
-        if (forwarded instanceof Response) return forwarded;
+        if (forwarded instanceof Response) return await rejectHostRuntime(hostRuntime, forwarded);
 
         const body = parseCreateBody(payload);
-        if (body instanceof Response) return body;
+        if (body instanceof Response) return await rejectHostRuntime(hostRuntime, body);
         // Top-level sessions own their trace. Callback sessions are delegated
         // remote agents and intentionally continue the dispatching agent trace.
         const parentTraceContext =
@@ -264,12 +311,15 @@ export function eveChannel(input: EveChannelInput): EveChannel {
             : parseTraceparent(req.headers.get("traceparent"));
 
         const policyRejection = checkUploadPolicy(body, uploadPolicy);
-        if (policyRejection !== null) return policyRejection;
+        if (policyRejection !== null) return await rejectHostRuntime(hostRuntime, policyRejection);
 
         if (body.operationId !== undefined && forwarded.auth.principalType === "anonymous") {
-          return Response.json(
-            { error: "operationId requires an authenticated principal.", ok: false },
-            { status: 400 },
+          return await rejectHostRuntime(
+            hostRuntime,
+            Response.json(
+              { error: "operationId requires an authenticated principal.", ok: false },
+              { status: 400 },
+            ),
           );
         }
         const operationToken =
@@ -282,15 +332,18 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         if (operationToken !== undefined) {
           const owner = await args.resolveSession(operationToken);
           if (owner !== undefined) {
-            return Response.json(
-              { ok: true, sessionId: owner.id, status: "accepted" },
-              {
-                headers: {
-                  "cache-control": "no-store",
-                  [EVE_SESSION_ID_HEADER]: owner.id,
+            return await rejectHostRuntime(
+              hostRuntime,
+              Response.json(
+                { ok: true, sessionId: owner.id, status: "accepted" },
+                {
+                  headers: {
+                    "cache-control": "no-store",
+                    [EVE_SESSION_ID_HEADER]: owner.id,
+                  },
+                  status: 202,
                 },
-                status: 202,
-              },
+              ),
             );
           }
         }
@@ -301,12 +354,16 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           message: body.message,
           request: req,
         });
-        if (messageResult instanceof Response) return messageResult;
+        if (messageResult instanceof Response)
+          return await rejectHostRuntime(hostRuntime, messageResult);
         const createSession = readRouteSessionCreator(args);
         if (createSession === undefined) {
-          return Response.json(
-            { error: "Session creation requires internal channel dispatch context.", ok: false },
-            { status: 500 },
+          return await rejectHostRuntime(
+            hostRuntime,
+            Response.json(
+              { error: "Session creation requires internal channel dispatch context.", ok: false },
+              { status: 500 },
+            ),
           );
         }
 
@@ -318,6 +375,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
               body.capabilities ?? (body.mode === "task" ? undefined : { requestInput: true }),
             callback: body.callback,
             continuationToken: operationToken,
+            hostRuntime,
             initiatorAuth: forwarded.accepted ? forwarded.initiatorAuth : undefined,
             input: {
               message: body.message,
@@ -332,15 +390,18 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           // A concurrent create-once request won the token: adopt its session
           // without delivering this duplicate input.
           if (operationToken !== undefined && isRuntimeSessionOwnershipConflictError(error)) {
-            return Response.json(
-              { ok: true, sessionId: error.ownerSessionId, status: "accepted" },
-              {
-                headers: {
-                  "cache-control": "no-store",
-                  [EVE_SESSION_ID_HEADER]: error.ownerSessionId,
+            return await rejectHostRuntime(
+              hostRuntime,
+              Response.json(
+                { ok: true, sessionId: error.ownerSessionId, status: "accepted" },
+                {
+                  headers: {
+                    "cache-control": "no-store",
+                    [EVE_SESSION_ID_HEADER]: error.ownerSessionId,
+                  },
+                  status: 202,
                 },
-                status: 202,
-              },
+              ),
             );
           }
           const errorId = logError(log, "session-create request failed", error);
@@ -349,6 +410,8 @@ export function eveChannel(input: EveChannelInput): EveChannel {
             { status: 500 },
           );
         }
+
+        await acceptHostRuntime(hostRuntime);
 
         return Response.json(
           { ok: true, sessionId: handle.sessionId, status: "accepted" },
@@ -365,16 +428,17 @@ export function eveChannel(input: EveChannelInput): EveChannel {
       POST(EVE_SESSION_ROUTE_PATTERN, async (req, { attachSession, params }) => {
         const authResult = await routeAuth(req, input.auth);
         if (authResult instanceof Response) return authResult;
-
+        const hostRuntime = await resolveTrustedRootHostRuntime(authResult);
+        if (hostRuntime instanceof Response) return hostRuntime;
         const sessionId = requireSessionId(params);
-        if (sessionId instanceof Response) return sessionId;
+        if (sessionId instanceof Response) return await rejectHostRuntime(hostRuntime, sessionId);
         const payload = await parseJsonRequest(req);
-        if (payload instanceof Response) return payload;
+        if (payload instanceof Response) return await rejectHostRuntime(hostRuntime, payload);
         const body = parseSessionMessageBody(payload);
-        if (body instanceof Response) return body;
+        if (body instanceof Response) return await rejectHostRuntime(hostRuntime, body);
 
         const policyRejection = checkUploadPolicy(body, uploadPolicy);
-        if (policyRejection !== null) return policyRejection;
+        if (policyRejection !== null) return await rejectHostRuntime(hostRuntime, policyRejection);
 
         let context = body.context;
         let dispatchAuth: SessionAuthContext | null = authResult;
@@ -386,7 +450,8 @@ export function eveChannel(input: EveChannelInput): EveChannel {
             request: req,
             sessionId,
           });
-          if (messageResult instanceof Response) return messageResult;
+          if (messageResult instanceof Response)
+            return await rejectHostRuntime(hostRuntime, messageResult);
           context = mergeContext(body.context, messageResult.context);
           dispatchAuth = messageResult.auth;
         }
@@ -394,13 +459,16 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         let result: Awaited<ReturnType<Session["send"]>>;
         try {
           const session = attachSession(sessionId);
-          const options = {
-            auth: dispatchAuth,
-            callback: body.callback,
-            context,
-            outputSchema: body.outputSchema,
-            turnPolicy: body.turnPolicy,
-          };
+          const options = attachHostRuntimeDeliveryOptions(
+            {
+              auth: dispatchAuth,
+              callback: body.callback,
+              context,
+              outputSchema: body.outputSchema,
+              turnPolicy: body.turnPolicy,
+            },
+            hostRuntime,
+          );
           result =
             body.inputResponses === undefined
               ? await session.send(body.message!, options)
@@ -413,15 +481,20 @@ export function eveChannel(input: EveChannelInput): EveChannel {
           );
         }
         if (result.status === "session_not_active") {
-          return Response.json(
-            {
-              code: "session_not_active",
-              error: "The session is no longer active.",
-              ok: false,
-            },
-            { headers: { "cache-control": "no-store" }, status: 409 },
+          return await rejectHostRuntime(
+            hostRuntime,
+            Response.json(
+              {
+                code: "session_not_active",
+                error: "The session is no longer active.",
+                ok: false,
+              },
+              { headers: { "cache-control": "no-store" }, status: 409 },
+            ),
           );
         }
+
+        await acceptHostRuntime(hostRuntime);
 
         return Response.json(
           { ok: true, sessionId: result.sessionId, status: "accepted" },
@@ -673,6 +746,67 @@ export function eveChannel(input: EveChannelInput): EveChannel {
     ],
     events: input.events,
   });
+}
+
+async function resolveTrustedRootHostRuntime(
+  auth: SessionAuthContext,
+): Promise<RootHostRuntimeContext | Response | undefined> {
+  const trusted = readTrustedHostRuntime(auth);
+  if (trusted === undefined) return undefined;
+
+  let prior;
+  try {
+    prior = await beginHostRuntimeAcceptance(trusted.acceptanceKey);
+  } catch (error) {
+    if (error instanceof HostRuntimeAcceptanceIndeterminateError) {
+      return acceptanceStateUnavailableResponse();
+    }
+    throw error;
+  }
+  if (prior !== undefined) {
+    if (prior === "INDETERMINATE") return acceptanceStateUnavailableResponse();
+    return Response.json(
+      {
+        code: "HOST_RUNTIME_REFERENCE_INVALID",
+        error: "The host runtime acceptance key was already used.",
+        ok: false,
+      },
+      { headers: { "cache-control": "no-store" }, status: 409 },
+    );
+  }
+
+  return {
+    acceptanceKey: trusted.acceptanceKey,
+    ownership: "root",
+    reference: trusted.reference,
+  };
+}
+
+async function acceptHostRuntime(hostRuntime: RootHostRuntimeContext | undefined): Promise<void> {
+  if (hostRuntime !== undefined) {
+    await recordHostRuntimeAcceptance(hostRuntime.acceptanceKey, "ACCEPTED");
+  }
+}
+
+async function rejectHostRuntime(
+  hostRuntime: RootHostRuntimeContext | undefined,
+  response: Response,
+): Promise<Response> {
+  if (hostRuntime !== undefined) {
+    await recordHostRuntimeAcceptance(hostRuntime.acceptanceKey, "NOT_ACCEPTED");
+  }
+  return response;
+}
+
+function acceptanceStateUnavailableResponse(): Response {
+  return Response.json(
+    {
+      code: "acceptance_state_unavailable",
+      error: "The acceptance state is temporarily unavailable.",
+      ok: false,
+    },
+    { headers: { "cache-control": "no-store", "retry-after": "1" }, status: 503 },
+  );
 }
 
 async function findRemoteSubagentBinding(input: {

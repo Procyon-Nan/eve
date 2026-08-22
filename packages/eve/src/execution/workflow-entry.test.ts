@@ -26,6 +26,8 @@ import { settleCancelledTurnStep } from "#execution/settle-cancelled-turn-step.j
 import { emitTerminalSessionFailureStep } from "#execution/terminal-session-failure-step.js";
 import type { SessionInboxPayload } from "#execution/session-command-inbox.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
+import { encodeSessionCommandV2 } from "#execution/wire/session-inbox-wire.v2.js";
+import { recordHostRuntimeAcceptanceStep } from "#runtime/host-runtime/acceptance.js";
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: vi.fn(),
@@ -44,6 +46,10 @@ vi.mock("#compiled/@workflow/core/index.js", () => ({
 
 vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   resumeHook: vi.fn(),
+}));
+
+vi.mock("#runtime/host-runtime/acceptance.js", () => ({
+  recordHostRuntimeAcceptanceStep: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./create-session-step.js", () => ({
@@ -213,6 +219,35 @@ describe("workflowEntry", () => {
     });
   });
 
+  it("records initial host-runtime acceptance only after continuation ownership", async () => {
+    const sessionState = createBaseSessionState();
+    const getConflict = vi.fn(async () => null);
+    vi.mocked(createSessionStep).mockResolvedValue(createSessionStepResultForMock(sessionState));
+    installHookMocks({
+      deliveryHooks: [{ getConflict, token: "http:test" }],
+      turnControls: [turnResult({ action: "done", output: "ok", sessionState })],
+    });
+
+    await workflowEntry({
+      hostRuntime: {
+        acceptanceKey: "create-acceptance",
+        ownership: "root",
+        reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+      },
+      input: { message: "hello there" },
+      serializedContext: createSerializedContext(),
+    });
+
+    expect(recordHostRuntimeAcceptanceStep).toHaveBeenCalledExactlyOnceWith("create-acceptance");
+    expect(getConflict.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(recordHostRuntimeAcceptanceStep).mock.invocationCallOrder[0] ??
+        Number.POSITIVE_INFINITY,
+    );
+    expect(vi.mocked(recordHostRuntimeAcceptanceStep).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(dispatchTurnStep).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
   it("exits a conflicting initial continuation before dispatching the first turn", async () => {
     const sessionState = createBaseSessionState();
     const dispose = vi.fn();
@@ -230,12 +265,18 @@ describe("workflowEntry", () => {
 
     await expect(
       workflowEntry({
+        hostRuntime: {
+          acceptanceKey: "duplicate-create-acceptance",
+          ownership: "root",
+          reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+        },
         input: { message: "duplicate" },
         serializedContext: createSerializedContext(),
       }),
     ).resolves.toEqual({ output: "" });
 
     expect(emitTerminalSessionFailureStep).not.toHaveBeenCalled();
+    expect(recordHostRuntimeAcceptanceStep).not.toHaveBeenCalled();
     expect(dispatchTurnStep).not.toHaveBeenCalled();
     expect(dispose).toHaveBeenCalledOnce();
   });
@@ -816,18 +857,22 @@ describe("workflowEntry", () => {
 
   it("passes the resumed channel request id to the next turn", async () => {
     const sessionState = createBaseSessionState();
+    const followup = encodeSessionCommandV2({
+      hostRuntime: {
+        acceptanceKey: "followup-acceptance",
+        ownership: "root",
+        reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+      },
+      requestId: "req_followup",
+      kind: "send",
+      payload: { message: "follow up" },
+    });
     vi.mocked(createSessionStep).mockResolvedValue(createSessionStepResultForMock(sessionState));
     installHookMocks({
       deliveryHooks: [
         {
           token: "http:test",
-          values: [
-            {
-              requestId: "req_followup",
-              kind: "send",
-              payload: { message: "follow up" },
-            },
-          ],
+          values: [followup as SessionInboxPayload],
         },
       ],
       turnControls: [
@@ -847,6 +892,10 @@ describe("workflowEntry", () => {
       kind: "deliver",
       payloads: [{ message: "follow up" }],
     });
+    expect(recordHostRuntimeAcceptanceStep).toHaveBeenCalledExactlyOnceWith("followup-acceptance");
+    expect(vi.mocked(recordHostRuntimeAcceptanceStep).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(dispatchTurnStep).mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("supplies a requested public delivery to the active turn inbox", async () => {
@@ -902,10 +951,15 @@ describe("workflowEntry", () => {
       return createMockHook({
         token,
         values: [
-          {
+          encodeSessionCommandV2({
+            hostRuntime: {
+              acceptanceKey: "active-response-acceptance",
+              ownership: "root",
+              reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+            },
             kind: "send",
             payload: { inputResponses: [{ optionId: "approve", requestId: "req-1" }] },
-          },
+          }) as SessionInboxPayload,
         ],
       }) as never;
     });
@@ -917,10 +971,21 @@ describe("workflowEntry", () => {
 
     expect(result).toEqual({ output: "finished" });
     expect(dispatchTurnStep).toHaveBeenCalledTimes(1);
+    expect(recordHostRuntimeAcceptanceStep).toHaveBeenCalledExactlyOnceWith(
+      "active-response-acceptance",
+    );
+    expect(vi.mocked(recordHostRuntimeAcceptanceStep).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(resumeHook).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
     expect(resumeHook).toHaveBeenCalledWith("turn-inbox", {
       delivery: {
         auth: undefined,
         caller: undefined,
+        hostRuntime: {
+          acceptanceKey: "active-response-acceptance",
+          ownership: "root",
+          reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+        },
         kind: "deliver",
         payloads: [{ inputResponses: [{ optionId: "approve", requestId: "req-1" }] }],
         requestId: undefined,

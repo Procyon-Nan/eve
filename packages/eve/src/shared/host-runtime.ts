@@ -4,6 +4,8 @@ import type { SessionAuthContext } from "#channel/types.js";
 import type { DynamicToolSet } from "#shared/dynamic-tool-definition.js";
 
 export const HOST_RUNTIME_DEFINITION_KIND = "eve.host-runtime" as const;
+export const HOST_RUNTIME_ACCEPTANCE_ATTRIBUTE = "$eve.host_runtime_acceptance";
+export const HOST_RUNTIME_ACCEPTANCE_STATUS_ATTRIBUTE = "$eve.host_runtime_acceptance_status";
 
 /** Durable opaque reference to a host-owned runtime snapshot. */
 export interface HostRuntimeReference {

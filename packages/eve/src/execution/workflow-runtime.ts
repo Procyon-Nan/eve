@@ -56,6 +56,7 @@ const WORKFLOW_ENTRY_NAME = "workflowEntry";
 const TURN_WORKFLOW_NAME = "turnWorkflow";
 const SESSION_TIMEOUT_WORKFLOW_NAME = "sessionTimeoutWorkflow";
 const TASK_RUN_WORKFLOW_NAME = "taskRunWorkflow";
+const HOST_RUNTIME_ACCEPTANCE_WORKFLOW_NAME = "hostRuntimeAcceptanceWorkflow";
 const EVE_PACKAGE_INFO = resolveInstalledPackageInfo();
 const COMMAND_HOOK_READY_TIMEOUT_MS = 30_000;
 
@@ -77,6 +78,7 @@ export const STABLE_WORKFLOW_NAMES: ReadonlySet<string> = new Set([
   TURN_WORKFLOW_NAME,
   SESSION_TIMEOUT_WORKFLOW_NAME,
   TASK_RUN_WORKFLOW_NAME,
+  HOST_RUNTIME_ACCEPTANCE_WORKFLOW_NAME,
 ]);
 
 const STABLE_ID_BASE = EVE_PACKAGE_INFO.name;
@@ -119,6 +121,11 @@ export const taskRunWorkflowReference = {
   workflowId: `workflow//${STABLE_ID_BASE}//${TASK_RUN_WORKFLOW_NAME}`,
 };
 
+/** Stable workflow reference for durable host-runtime acceptance receipts. */
+export const hostRuntimeAcceptanceWorkflowReference = {
+  workflowId: `workflow//${STABLE_ID_BASE}//${HOST_RUNTIME_ACCEPTANCE_WORKFLOW_NAME}`,
+};
+
 /**
  * Creates a workflow-backed runtime whose long-lived driver owns the
  * event stream and dispatches each turn as a child workflow run.
@@ -146,6 +153,7 @@ export function createWorkflowRuntime(config: {
       const workflowInput: {
         -readonly [K in keyof WorkflowEntryInput]: WorkflowEntryInput[K];
       } = {
+        hostRuntime: input.hostRuntime,
         input: input.input,
         limits: input.limits,
         serializedContext,

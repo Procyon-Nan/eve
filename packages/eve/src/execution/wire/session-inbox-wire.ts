@@ -14,6 +14,9 @@ import {
 } from "#execution/wire/session-inbox-contract.js";
 import type { SessionInboxWire } from "#execution/wire/session-inbox-encoder.js";
 import { sessionInboxWireV0Migration } from "#execution/wire/session-inbox-wire.v0.js";
+import { sessionInboxWireV1ToV2 } from "#execution/wire/session-inbox-wire-v1-to-v2.js";
+import { sessionInboxWireV2Schema } from "#execution/wire/session-inbox-wire.v2.js";
+import { formatValidationError } from "#runtime/validation.js";
 
 /**
  * The session inbox wire family: every payload persisted to a session's
@@ -38,7 +41,10 @@ export { SessionInboxWireError } from "#execution/wire/session-inbox-contract.js
 /** Prefixes chain and schema failures alike, so messages read as one voice. */
 const WIRE_LABEL = "session inbox payload";
 
-const sessionInboxMigrations: readonly VersionMigration[] = [sessionInboxWireV0Migration];
+const sessionInboxMigrations: readonly VersionMigration[] = [
+  sessionInboxWireV0Migration,
+  sessionInboxWireV1ToV2,
+];
 
 /**
  * Decodes a persisted inbox payload or throws {@link SessionInboxWireError}.
@@ -61,13 +67,19 @@ function decode(value: unknown): DecodedSessionInbox {
     throw new SessionInboxWireError(error instanceof Error ? error.message : String(error));
   }
 
-  const wire = migrated as Partial<SessionInboxWire>;
-  if (wire.version !== SESSION_INBOX_WIRE_VERSION) {
+  const versioned = migrated as { readonly version?: unknown };
+  if (versioned.version !== SESSION_INBOX_WIRE_VERSION) {
     throw new SessionInboxWireError(
-      `${WIRE_LABEL} declares version ${JSON.stringify(wire.version)}, expected ${SESSION_INBOX_WIRE_VERSION}.`,
+      `${WIRE_LABEL} declares version ${JSON.stringify(versioned.version)}, expected ${SESSION_INBOX_WIRE_VERSION}.`,
     );
   }
-  return normalizeWire(wire as SessionInboxWire);
+  const parsed = sessionInboxWireV2Schema.safeParse(migrated);
+  if (!parsed.success) {
+    throw new SessionInboxWireError(
+      `${WIRE_LABEL} does not match wire version ${SESSION_INBOX_WIRE_VERSION}: ${formatValidationError(parsed.error)}`,
+    );
+  }
+  return normalizeWire(parsed.data);
 }
 
 /** Workflow-safe consumer facade. */
@@ -76,8 +88,10 @@ export const sessionInboxWire = { decode } as const;
 /** Strips wire-only fields (`version`, the deliver mirror) for consumption. */
 function normalizeWire(wire: SessionInboxWire): DecodedSessionInbox {
   switch (wire.kind) {
-    case "deliver":
-      return {
+    case "deliver": {
+      const delivery: {
+        -readonly [K in keyof DeliverHookPayload]: DeliverHookPayload[K];
+      } = {
         auth: wire.auth,
         caller: wire.caller,
         deliveryMetadata: wire.deliveryMetadata,
@@ -87,6 +101,9 @@ function normalizeWire(wire: SessionInboxWire): DecodedSessionInbox {
         taskDeliveryId: wire.taskDeliveryId,
         turnPolicy: wire.turnPolicy,
       };
+      if (wire.hostRuntime !== undefined) delivery.hostRuntime = wire.hostRuntime;
+      return delivery;
+    }
     case "session-timeout":
       return { kind: "session-timeout" };
     case "clear":

@@ -3,6 +3,7 @@ import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import type { SessionCommandInbox } from "#execution/session-command-inbox.js";
 import type { SessionStateCursor } from "#execution/session-state-cursor.js";
 import { reportDroppedWirePayloadStep } from "#execution/report-dropped-wire-payload-step.js";
+import { recordConsumedHostRuntimeAcceptance } from "#execution/record-consumed-host-runtime-acceptance.js";
 import {
   sessionInboxWire,
   SessionInboxWireError,
@@ -203,6 +204,10 @@ async function waitForNextSessionAction(input: {
       // failure; reinterpreting an unknown payload is the bug. Stay parked.
       await reportDroppedWirePayloadStep({ detail: error.message, family: "session-inbox" });
       continue;
+    }
+
+    if (decoded.kind === "deliver") {
+      await recordConsumedHostRuntimeAcceptance(decoded);
     }
 
     if (decoded.kind === "session-timeout") {

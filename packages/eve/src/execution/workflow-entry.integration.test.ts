@@ -15,6 +15,7 @@ import {
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
+import { beginHostRuntimeAcceptance } from "#runtime/host-runtime/acceptance.js";
 import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
@@ -1196,6 +1197,50 @@ describe("workflowEntry integration", () => {
         expect(attrs["$eve.subagent"]).toBeUndefined();
       } finally {
         stream.dispose();
+        await run.cancel();
+      }
+    });
+  });
+
+  it("atomically persists the initial host-runtime command with the root workflow input", async () => {
+    const runtime = createTestRuntime({ agent: { name: "workflow-entry-host-runtime" } });
+    const hostRuntime = {
+      acceptanceKey: "integration-create-acceptance",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+    };
+
+    await runtime.run(async () => {
+      await expect(beginHostRuntimeAcceptance(hostRuntime.acceptanceKey)).resolves.toBeUndefined();
+      const run = await start(
+        workflowEntry,
+        [
+          {
+            hostRuntime,
+            input: { message: "host-runtime create" },
+            serializedContext: buildSerializedContext({
+              channelKind: "http",
+              mode: "conversation",
+            }),
+          },
+        ],
+        {
+          allowReservedAttributes: true,
+          attributes: {
+            "$eve.type": "session",
+          },
+        },
+      );
+
+      try {
+        const persisted = await (await getWorld()).runs.get(run.runId);
+        const [input] = (await hydrateWorkflowArguments(
+          persisted.input,
+          run.runId,
+          undefined,
+        )) as readonly [{ readonly hostRuntime?: unknown }];
+        expect(input.hostRuntime).toEqual(hostRuntime);
+      } finally {
         await run.cancel();
       }
     });

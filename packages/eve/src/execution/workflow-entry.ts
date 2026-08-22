@@ -47,6 +47,8 @@ import { readSerializedSubagentDepth } from "#harness/subagent-depth.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import type { TokenUsage } from "#shared/token-usage.js";
 import { isTaskOwnedSerializedContext } from "#execution/tasks/child/instructions.js";
+import { recordConsumedHostRuntimeAcceptance } from "#execution/record-consumed-host-runtime-acceptance.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 const SAFE_OUTER_WORKFLOW_FAILURE_MESSAGE =
   "Agent workflow failed. Inspect the private session trace for details.";
@@ -61,6 +63,7 @@ const SAFE_OUTER_WORKFLOW_FAILURE_MESSAGE =
  * and deserialized at each `"use step"` boundary.
  */
 export interface WorkflowEntryInput {
+  readonly hostRuntime?: DurableHostRuntimeContext;
   readonly input: RunInput["input"];
   readonly limits?: RunInput["limits"];
   readonly sessionTimeoutMs?: number | false;
@@ -202,6 +205,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
                 },
               ],
         kind: "deliver",
+        hostRuntime: input.hostRuntime,
         payloads: [
           {
             message: input.input.message,
@@ -463,6 +467,9 @@ async function runDriverLoop(input: {
         if (!isHookConflictError(error)) throw error;
         return { kind: "result", result: { output: "" } };
       }
+    }
+    if (input.initialInput.kind === "deliver") {
+      await recordConsumedHostRuntimeAcceptance(input.initialInput);
     }
     await sessionTimeout?.start();
 

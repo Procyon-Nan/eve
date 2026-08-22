@@ -27,4 +27,5 @@ export {
   defineHostRuntime,
   defineRemoteAgent,
   registerHostRuntimeProvider,
+  withHostRuntime,
 } from "../../src/public/index.ts";

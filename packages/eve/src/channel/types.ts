@@ -9,6 +9,7 @@ import type { ChannelAdapter } from "#channel/adapter.js";
 import type { AgentLimitsDefinition } from "#shared/agent-definition.js";
 import type { JsonObject } from "#shared/json.js";
 import type { TaskView } from "#tasks/types.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 export type { ContextAccessor } from "#context/key.js";
 export type { ChannelInstrumentationProjection } from "#channel/instrumentation.js";
@@ -191,6 +192,8 @@ export type SessionCommand =
   | {
       readonly auth?: SessionAuthContext | null;
       readonly caller?: TurnCaller;
+      /** Framework-private host-runtime handoff for this logical turn. */
+      readonly hostRuntime?: DurableHostRuntimeContext;
       readonly kind: "send";
       readonly payload: DeliverPayload;
       readonly delivery?: ChannelDeliveryMetadata;
@@ -252,6 +255,8 @@ export interface DeliverHookPayload {
   readonly auth?: SessionAuthContext | null;
   /** Delegated caller waiting for this turn's settled result. */
   readonly caller?: TurnCaller;
+  /** Framework-private host-runtime handoff for this logical turn. */
+  readonly hostRuntime?: DurableHostRuntimeContext;
   /** Additive durable metadata. Absent on envelopes written by older deployments. */
   readonly deliveryMetadata?: readonly ChannelDeliveryMetadataEntry[];
   /** Inbound channel request id used only for workflow attributes. */
@@ -434,6 +439,8 @@ export interface RunInput {
    * request was accepted with no credentials.
    */
   readonly auth: SessionAuthContext | null;
+  /** Framework-private host-runtime handoff for the initial logical turn. */
+  readonly hostRuntime?: DurableHostRuntimeContext;
   /**
    * Session-level capabilities. When omitted, every flag is
    * interpreted as `false`. Channel routes that can reach a human

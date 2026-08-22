@@ -178,6 +178,33 @@ describe("createWorkflowRuntime command dispatch", () => {
     );
   });
 
+  it("persists a host-runtime handoff only on the v2 session inbox wire", async () => {
+    const hook = {
+      metadata: { sessionInboxWireVersion: 2 },
+      runId: "session-1",
+      token: sessionCommandHookToken("session-1"),
+    };
+    getHookByTokenMock.mockResolvedValue(hook);
+    resumeHookMock.mockResolvedValue({ runId: "session-1" });
+    const hostRuntime = {
+      acceptanceKey: "command-send-1",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+    };
+
+    await expect(
+      buildRuntime().dispatchSession({
+        command: { hostRuntime, kind: "send", payload: { message: "hello" } },
+        sessionId: "session-1",
+      }),
+    ).resolves.toEqual({ sessionId: "session-1", status: "accepted" });
+
+    expect(resumeHookMock).toHaveBeenCalledWith(
+      hook,
+      expect.objectContaining({ hostRuntime, kind: "deliver", version: 2 }),
+    );
+  });
+
   it.each([
     { command: { kind: "send" as const, payload: {} }, status: "session_not_active" },
     { command: { kind: "compact" as const }, status: "no_active_session" },
@@ -411,6 +438,31 @@ describe("createWorkflowRuntime#createSession", () => {
     const [, workflowInput, startOptions] = startMock.mock.calls[0]!;
     expect(workflowInput[0].input.message).toBe(message);
     expect(startOptions.attributes["$eve.title"]).toBe("ship it");
+  });
+
+  it("atomically starts the initial command with its acceptance key and root reference", async () => {
+    const compiledArtifactsSource = {} as RuntimeCompiledArtifactsSource;
+    mockBundleAndRun(compiledArtifactsSource);
+    startMock.mockResolvedValue({ runId: "driver-run" });
+    const hostRuntime = {
+      acceptanceKey: "command-create-1",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+    };
+
+    await buildRuntime(compiledArtifactsSource).createSession({
+      adapter,
+      auth: null,
+      hostRuntime,
+      input: { message: "hello" },
+      mode: "conversation",
+    });
+
+    expect(startMock).toHaveBeenCalledWith(
+      workflowEntryReference,
+      [expect.objectContaining({ hostRuntime, input: { message: "hello" } })],
+      expect.any(Object),
+    );
   });
 
   it("passes the configured session timeout to the durable workflow", async () => {

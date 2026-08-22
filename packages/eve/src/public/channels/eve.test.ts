@@ -9,9 +9,9 @@ import { attachRouteSessionCreator } from "#internal/nitro/routes/channel-route-
 import { mockChannelContext } from "#internal/testing/mocks/mock-channel-operations.js";
 import { type AuthFn, none } from "#public/channels/auth.js";
 import { eveChannel, defaultEveAuth, type EveChannelInput } from "#public/channels/eve.js";
-import type { RunInput, SessionAuthContext } from "#channel/types.js";
+import type { RunInput, Runtime, SessionAuthContext } from "#channel/types.js";
 import type { RouteHandlerArgs, SendPayload } from "#channel/routes.js";
-import type { Session } from "#channel/session.js";
+import { createSession as createRuntimeSessionHandle, type Session } from "#channel/session.js";
 import { ContextContainer, contextStorage } from "#context/container.js";
 import type { ContextAccessor } from "#context/key.js";
 import {
@@ -21,6 +21,23 @@ import {
   type Session as RuntimeSession,
 } from "#context/keys.js";
 import { createMessageCompletedEvent } from "#protocol/message.js";
+import { withHostRuntime } from "#runtime/host-runtime/trusted-auth.js";
+import {
+  HostRuntimeAcceptanceIndeterminateError,
+  beginHostRuntimeAcceptance,
+  queryHostRuntimeAcceptance,
+  recordHostRuntimeAcceptance,
+} from "#runtime/host-runtime/acceptance.js";
+
+vi.mock("#runtime/host-runtime/acceptance.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#runtime/host-runtime/acceptance.js")>();
+  return {
+    ...actual,
+    beginHostRuntimeAcceptance: vi.fn(),
+    queryHostRuntimeAcceptance: vi.fn(),
+    recordHostRuntimeAcceptance: vi.fn(),
+  };
+});
 
 /**
  * Unit coverage for the inbound HTTP route's message-body parser and
@@ -49,7 +66,14 @@ const OVERRIDE_AUTH: SessionAuthContext = {
 
 type MockSendOptions = Pick<
   RunInput,
-  "auth" | "callback" | "capabilities" | "continuationToken" | "initiatorAuth" | "mode" | "title"
+  | "auth"
+  | "callback"
+  | "capabilities"
+  | "continuationToken"
+  | "hostRuntime"
+  | "initiatorAuth"
+  | "mode"
+  | "title"
 >;
 
 function createJsonMessageRequest(body: unknown): Request {
@@ -126,6 +150,7 @@ function createEveCreateHandler(
       callback: runInput.callback,
       capabilities: runInput.capabilities,
       continuationToken: runInput.continuationToken,
+      hostRuntime: runInput.hostRuntime,
       initiatorAuth: runInput.initiatorAuth,
       mode: runInput.mode,
       title: runInput.title,
@@ -177,6 +202,56 @@ function createEveContinueHandler(input: EveChannelInput) {
         params: { sessionId: "test-session-id" },
       };
       return (continueRoute as any).handler(req, args);
+    },
+  };
+}
+
+function createEveAcceptanceHandler(input: EveChannelInput, acceptanceKey: string) {
+  const channel = eveChannel(input);
+  const route = channel.routes.find(
+    (candidate) =>
+      candidate.method === "GET" &&
+      candidate.path === "/eve/v1/host-runtime/acceptance/:acceptanceKey",
+  );
+  if (!route) throw new Error("No host-runtime acceptance GET route found");
+  return async () =>
+    (route as any).handler(
+      new Request(
+        `https://example.com/eve/v1/host-runtime/acceptance/${encodeURIComponent(acceptanceKey)}`,
+      ),
+      { ...createRouteArgs(), params: { acceptanceKey } },
+    ) as Promise<Response>;
+}
+
+function createEveContinueDispatchHandler(input: EveChannelInput) {
+  const channel = eveChannel(input);
+  const route = channel.routes.find(
+    (candidate) => candidate.method === "POST" && candidate.path === "/eve/v1/session/:sessionId",
+  );
+  if (!route) throw new Error("No continue POST route found");
+
+  const dispatchSession = vi.fn(async (_dispatchInput: unknown) => ({
+    sessionId: "test-session-id",
+    status: "accepted" as const,
+  }));
+  const runtime = {
+    createSession: vi.fn(),
+    dispatchContinuation: vi.fn(),
+    dispatchSession: async (dispatchInput) => (await dispatchSession(dispatchInput)) as never,
+    getEventStream: vi.fn(),
+    getStreamTailIndex: vi.fn(),
+    resolveContinuation: vi.fn(),
+  } satisfies Runtime;
+  const session = createRuntimeSessionHandle("test-session-id", runtime);
+
+  return {
+    dispatchSession,
+    async fetch(req: Request) {
+      return await (route as any).handler(req, {
+        ...createRouteArgs(),
+        attachSession: () => session,
+        params: { sessionId: "test-session-id" },
+      });
     },
   };
 }
@@ -930,6 +1005,163 @@ describe("eveChannel — create session idempotency", () => {
 
     expect(handler.send.mock.calls[0]?.[1]?.continuationToken).toBeUndefined();
     expect(handler.resolveSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("eveChannel — host runtime handoff", () => {
+  const reference = { providerKind: "baigong-agent", value: "opaque-reference" } as const;
+
+  it("accepts a branded create reference without exposing it through auth or JSON", async () => {
+    const auth = withHostRuntime(ACCEPTED_AUTH, {
+      acceptanceKey: "command-create-1",
+      reference,
+    });
+    const handler = createEveCreateHandler({ auth: () => auth });
+    const response = await handler.fetch(createJsonMessageRequest({ message: "hello" }));
+
+    expect(response.status).toBe(202);
+    expect(handler.send).toHaveBeenCalledWith(
+      "hello",
+      expect.objectContaining({
+        auth: ACCEPTED_AUTH,
+        hostRuntime: {
+          acceptanceKey: "command-create-1",
+          ownership: "root",
+          reference,
+        },
+      }),
+    );
+    expect(auth.attributes).toBe(ACCEPTED_AUTH.attributes);
+    expect(Object.keys(auth)).toEqual(Object.keys(ACCEPTED_AUTH));
+    expect(JSON.stringify(auth)).not.toContain(reference.value);
+    expect(beginHostRuntimeAcceptance).toHaveBeenCalledWith("command-create-1");
+    expect(recordHostRuntimeAcceptance).toHaveBeenCalledWith("command-create-1", "ACCEPTED");
+  });
+
+  it("carries distinct references through existing-session send and respond commands", async () => {
+    const auth = vi
+      .fn()
+      .mockReturnValueOnce(
+        withHostRuntime(ACCEPTED_AUTH, { acceptanceKey: "command-send-1", reference }),
+      )
+      .mockReturnValueOnce(
+        withHostRuntime(ACCEPTED_AUTH, { acceptanceKey: "command-respond-1", reference }),
+      );
+    const handler = createEveContinueDispatchHandler({ auth });
+    await expect(
+      handler.fetch(createJsonMessageRequest({ message: "follow-up" })),
+    ).resolves.toMatchObject({ status: 202 });
+    await expect(
+      handler.fetch(
+        createJsonMessageRequest({
+          inputResponses: [{ requestId: "request-1", optionId: "approve" }],
+        }),
+      ),
+    ).resolves.toMatchObject({ status: 202 });
+
+    expect(handler.dispatchSession).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        command: expect.objectContaining({
+          hostRuntime: {
+            acceptanceKey: "command-send-1",
+            ownership: "root",
+            reference,
+          },
+          payload: { message: "follow-up" },
+        }),
+      }),
+    );
+    expect(handler.dispatchSession).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        command: expect.objectContaining({
+          hostRuntime: {
+            acceptanceKey: "command-respond-1",
+            ownership: "root",
+            reference,
+          },
+          payload: {
+            inputResponses: [{ requestId: "request-1", optionId: "approve" }],
+          },
+        }),
+      }),
+    );
+  });
+
+  it("records definite rejection and never dispatches malformed or duplicate commands", async () => {
+    const malformedAuth = withHostRuntime(ACCEPTED_AUTH, {
+      acceptanceKey: "command-rejected-1",
+      reference,
+    });
+    const malformed = createEveCreateHandler({ auth: () => malformedAuth });
+    const malformedResponse = await malformed.fetch(createJsonMessageRequest({ message: 42 }));
+    expect(malformedResponse.status).toBe(400);
+    expect(malformed.send).not.toHaveBeenCalled();
+    expect(recordHostRuntimeAcceptance).toHaveBeenCalledWith("command-rejected-1", "NOT_ACCEPTED");
+
+    vi.mocked(beginHostRuntimeAcceptance).mockResolvedValueOnce("ACCEPTED");
+    const duplicate = createEveCreateHandler({
+      auth: () =>
+        withHostRuntime(ACCEPTED_AUTH, {
+          acceptanceKey: "command-duplicate-1",
+          reference,
+        }),
+    });
+    const duplicateResponse = await duplicate.fetch(
+      createJsonMessageRequest({ message: "must not run twice" }),
+    );
+    expect(duplicateResponse.status).toBe(409);
+    expect(duplicate.send).not.toHaveBeenCalled();
+  });
+
+  it("returns only a final status to the matching trusted probe caller", async () => {
+    const acceptanceKey = "command-probe-1";
+    vi.mocked(queryHostRuntimeAcceptance).mockResolvedValueOnce("ACCEPTED");
+    const fetch = createEveAcceptanceHandler(
+      {
+        auth: () => withHostRuntime(ACCEPTED_AUTH, { acceptanceKey, reference }),
+      },
+      acceptanceKey,
+    );
+
+    const response = await fetch();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, status: "ACCEPTED" });
+    expect(queryHostRuntimeAcceptance).toHaveBeenCalledWith(acceptanceKey);
+  });
+
+  it("fails closed for unauthorized and indeterminate acceptance probes", async () => {
+    const unauthorized = createEveAcceptanceHandler(
+      {
+        auth: () =>
+          withHostRuntime(ACCEPTED_AUTH, {
+            acceptanceKey: "another-command",
+            reference,
+          }),
+      },
+      "command-probe-1",
+    );
+    expect((await unauthorized()).status).toBe(403);
+
+    vi.mocked(queryHostRuntimeAcceptance).mockRejectedValueOnce(
+      new HostRuntimeAcceptanceIndeterminateError(),
+    );
+    const indeterminate = createEveAcceptanceHandler(
+      {
+        auth: () =>
+          withHostRuntime(ACCEPTED_AUTH, {
+            acceptanceKey: "command-probe-indeterminate",
+            reference,
+          }),
+      },
+      "command-probe-indeterminate",
+    );
+    const response = await indeterminate();
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    await expect(response.json()).resolves.not.toHaveProperty("reference");
   });
 });
 

@@ -23,6 +23,7 @@ export {
 } from "#public/definitions/agent.js";
 export { type HostRuntimeErrorCode, HostRuntimeError } from "#runtime/host-runtime/errors.js";
 export { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
+export { withHostRuntime } from "#runtime/host-runtime/trusted-auth.js";
 export type {
   HostRuntimeAcceptanceStatus,
   HostRuntimeDefinition,

@@ -157,7 +157,7 @@ const taskPayloadSchema = z
  * extension point and pass through unchanged; changing any declared field is
  * a session-inbox wire-version change.
  */
-const deliverPayloadSchema = z
+export const deliverPayloadSchema = z
   .object({
     context: z.array(z.string()).optional(),
     inputResponses: z.array(inputResponseSchema).optional(),
@@ -167,7 +167,7 @@ const deliverPayloadSchema = z
   })
   .loose();
 
-const authSchema = z
+export const authSchema = z
   .object({
     attributes: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
     authenticator: z.string(),
@@ -177,7 +177,7 @@ const authSchema = z
     subject: z.string().optional(),
   })
   .strict();
-const callerSchema = z
+export const callerSchema = z
   .object({
     callId: z.string(),
     replyTo: z.discriminatedUnion("kind", [
@@ -191,7 +191,7 @@ const callerSchema = z
 const traceContextSchema = z
   .object({ spanId: z.string(), traceFlags: z.number(), traceId: z.string() })
   .strict();
-const deliveryMetadataSchema = z
+export const deliveryMetadataSchema = z
   .object({
     channelKind: z.string(),
     channelName: z.string(),

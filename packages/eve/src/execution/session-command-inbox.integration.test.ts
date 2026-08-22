@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
+import { hostRuntimeSessionInboxWorkflow } from "#internal/testing/host-runtime-session-inbox-workflow.js";
 import { sessionCommandInboxWorkflow } from "#internal/testing/session-command-inbox-workflow.js";
 import { legacySessionDeliveryWorkflow } from "#internal/testing/legacy-session-delivery-workflow.js";
 import { midCohortSessionDeliveryWorkflow } from "#internal/testing/mid-cohort-session-delivery-workflow.js";
@@ -8,6 +9,11 @@ import { waitForHook } from "#internal/testing/workflow-test-helpers.js";
 import { getHookByToken, getWorld, resumeHook, start } from "#internal/workflow/runtime.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
 import type { RuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
+import {
+  beginHostRuntimeAcceptance,
+  queryHostRuntimeAcceptance,
+} from "#runtime/host-runtime/acceptance.js";
+import { createRuntimeSession, withRuntimeSession } from "#runtime/sessions/runtime-session.js";
 
 describe("session command inbox integration", () => {
   it("resumes a legacy delivery-only workflow from a current send command", async () => {
@@ -87,8 +93,45 @@ describe("session command inbox integration", () => {
         const hook = (await getHookByToken(token)) as {
           metadata?: { sessionInboxWireVersion?: unknown };
         };
-        expect(hook.metadata?.sessionInboxWireVersion, `hook ${token}`).toBe(1);
+        expect(hook.metadata?.sessionInboxWireVersion, `hook ${token}`).toBe(2);
       }
+    } finally {
+      const status = await run.status;
+      if (status === "pending" || status === "running") await run.cancel();
+    }
+  });
+
+  it("persists the validated host-runtime context through the version-2 inbox wire", async () => {
+    const run = await start(hostRuntimeSessionInboxWorkflow, []);
+    const stableToken = sessionCommandHookToken(run.runId);
+    const hostRuntime = {
+      acceptanceKey: "integration-send-acceptance",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+    };
+
+    try {
+      await expect(beginHostRuntimeAcceptance(hostRuntime.acceptanceKey)).resolves.toBeUndefined();
+      await waitForHook({ runId: run.runId }, { token: stableToken });
+      const runtime = createWorkflowRuntime({
+        compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource,
+      });
+      await expect(
+        runtime.dispatchSession({
+          command: {
+            hostRuntime,
+            kind: "send",
+            payload: { message: "host-runtime follow-up" },
+          },
+          sessionId: run.runId,
+        }),
+      ).resolves.toEqual({ sessionId: run.runId, status: "accepted" });
+      await expect(run.returnValue).resolves.toEqual(hostRuntime);
+      await withRuntimeSession(createRuntimeSession("host-runtime-acceptance-cold"), async () => {
+        await expect(queryHostRuntimeAcceptance(hostRuntime.acceptanceKey)).resolves.toBe(
+          "ACCEPTED",
+        );
+      });
     } finally {
       const status = await run.status;
       if (status === "pending" || status === "running") await run.cancel();

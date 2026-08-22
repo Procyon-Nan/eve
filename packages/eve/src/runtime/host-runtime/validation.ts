@@ -10,8 +10,8 @@ import {
 } from "#shared/host-runtime.js";
 import { isRuntimeLanguageModel } from "#shared/runtime-language-model.js";
 
-const PROVIDER_KIND_PATTERN = /^[a-z][a-z0-9_-]{0,79}$/;
-const MAX_REFERENCE_VALUE_LENGTH = 512;
+export const HOST_RUNTIME_PROVIDER_KIND_PATTERN = /^[a-z][a-z0-9_-]{0,79}$/;
+export const MAX_HOST_RUNTIME_REFERENCE_VALUE_LENGTH = 512;
 export const MAX_HOST_RUNTIME_ACCEPTANCE_KEY_LENGTH = 200;
 const MAX_MODEL_ID_LENGTH = 255;
 const RESOLVED_RUNTIME_KEYS = new Set([
@@ -25,7 +25,7 @@ const RESOLVED_RUNTIME_KEYS = new Set([
 ]);
 
 export function validateProviderKind(providerKind: unknown): string {
-  if (typeof providerKind !== "string" || !PROVIDER_KIND_PATTERN.test(providerKind)) {
+  if (typeof providerKind !== "string" || !HOST_RUNTIME_PROVIDER_KIND_PATTERN.test(providerKind)) {
     throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
   }
   return providerKind;
@@ -37,7 +37,7 @@ export function validateHostRuntimeReference(value: unknown): HostRuntimeReferen
   if (
     typeof record.value !== "string" ||
     record.value.length === 0 ||
-    record.value.length > MAX_REFERENCE_VALUE_LENGTH
+    record.value.length > MAX_HOST_RUNTIME_REFERENCE_VALUE_LENGTH
   ) {
     throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
   }

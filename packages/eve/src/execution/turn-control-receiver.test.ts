@@ -8,6 +8,8 @@ import { reportDroppedWirePayloadStep } from "#execution/report-dropped-wire-pay
 import type { SessionCommandInbox, SessionInboxPayload } from "#execution/session-command-inbox.js";
 import type { TurnControlPayload } from "#execution/turn-control-protocol.js";
 import { TurnControlReceiver } from "#execution/turn-control-receiver.js";
+import { encodeSessionCommandV2 } from "#execution/wire/session-inbox-wire.v2.js";
+import { recordHostRuntimeAcceptanceStep } from "#runtime/host-runtime/acceptance.js";
 
 const createHookMock = vi.fn();
 
@@ -25,6 +27,10 @@ vi.mock("./forward-turn-cancellation-step.js", () => ({
 
 vi.mock("./report-dropped-wire-payload-step.js", () => ({
   reportDroppedWirePayloadStep: vi.fn(),
+}));
+
+vi.mock("#runtime/host-runtime/acceptance.js", () => ({
+  recordHostRuntimeAcceptanceStep: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe("TurnControlReceiver", () => {
@@ -149,6 +155,32 @@ describe("TurnControlReceiver", () => {
       { kind: "deliver", payloads: [{ message: "legacy follow up" }] },
     ]);
     expect(bufferedSessionControls).toEqual(["clear", "compact", "expired"]);
+  });
+
+  it("records host-runtime acceptance when an active turn consumes a delivery", async () => {
+    installControlHook([parkResult()], true);
+    const bufferedDeliveries: DeliverHookPayload[] = [];
+    const command = encodeSessionCommandV2({
+      hostRuntime: {
+        acceptanceKey: "active-turn-acceptance",
+        ownership: "root",
+        reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+      },
+      kind: "send",
+      payload: { message: "follow up" },
+    });
+
+    await runReceiver(bufferedDeliveries, {
+      commandInbox: createCommandInbox([command as SessionInboxPayload]),
+    });
+
+    expect(recordHostRuntimeAcceptanceStep).toHaveBeenCalledExactlyOnceWith(
+      "active-turn-acceptance",
+    );
+    expect(vi.mocked(recordHostRuntimeAcceptanceStep).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(forwardTurnCancellationStep).mock.invocationCallOrder[0] ??
+        Number.POSITIVE_INFINITY,
+    );
   });
 
   it("consumes a replayed task delivery only once", async () => {

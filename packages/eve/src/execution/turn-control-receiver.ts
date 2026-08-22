@@ -9,6 +9,7 @@ import type { NextDriverAction } from "#execution/next-driver-action.js";
 import type { SessionCommandInbox } from "#execution/session-command-inbox.js";
 import { turnCancellationHookToken } from "#execution/turn-cancellation-token.js";
 import { reportDroppedWirePayloadStep } from "#execution/report-dropped-wire-payload-step.js";
+import { recordConsumedHostRuntimeAcceptance } from "#execution/record-consumed-host-runtime-acceptance.js";
 import {
   sessionInboxWire,
   SessionInboxWireError,
@@ -174,7 +175,11 @@ export class TurnControlReceiver {
         return await this.nextControlOrCommand();
       }
       try {
-        return { command: sessionInboxWire.decode(winner.value.value), kind: "command" };
+        const command = sessionInboxWire.decode(winner.value.value);
+        if (command.kind === "deliver") {
+          await recordConsumedHostRuntimeAcceptance(command);
+        }
+        return { command, kind: "command" };
       } catch (error) {
         if (!(error instanceof SessionInboxWireError)) throw error;
         // Drop loudly and keep servicing the turn; see sessionInboxWire.decode.
@@ -253,6 +258,7 @@ export class TurnControlReceiver {
         continue;
       }
       if (decoded.kind === "deliver") {
+        await recordConsumedHostRuntimeAcceptance(decoded);
         if (!this.acceptTaskDelivery(decoded)) continue;
         if (deliveryHasMessage(decoded)) {
           await this.bufferDelivery(decoded);
