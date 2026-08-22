@@ -33,6 +33,7 @@ import {
 import type { DurableDynamicToolMetadata } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 import {
   getDynamicToolStepRegistry,
   lookupDynamicToolStepFunction,
@@ -239,7 +240,10 @@ async function resolveToolsFromEvent(
       const handler = resolver.events[event.type];
       if (handler === undefined) return null;
 
-      const resolveCtx = buildResolveContext(ctx, messages);
+      const resolveCtx = buildResolveContext(ctx, messages, {
+        capability: "tool",
+        eventType: event.type,
+      });
       const rawResult = await handler(event, resolveCtx);
       if (rawResult === null || rawResult === undefined) return null;
       const { entries, isSingle } = readDynamicToolResult(resolver, rawResult);
@@ -249,6 +253,10 @@ async function resolveToolsFromEvent(
 
   const metadata: DurableDynamicToolMetadata[] = [];
   const liveTools: HarnessToolDefinition[] = [];
+  const hostFailure = outcomes.find(
+    (outcome) => outcome.status === "rejected" && isHostRuntimeError(outcome.reason),
+  );
+  if (hostFailure?.status === "rejected") throw hostFailure.reason;
   // Tracks which resolver claimed each name so two dynamic resolvers can't
   // silently shadow each other (a dynamic tool overriding an authored one is
   // allowed and handled at merge time).

@@ -23,6 +23,7 @@ import {
 import {
   AuthKey,
   CapabilitiesKey,
+  HostRuntimePreflightKey,
   ModeKey,
   ParentSessionKey,
   SessionDynamicSubagentRuntimeRevisionKey,
@@ -59,11 +60,9 @@ import {
   isWorkflowRuntimeActionInterrupt,
 } from "#harness/workflow-runtime-action-state.js";
 import { getPendingWorkflowInterrupt } from "#harness/workflow-interrupt-state.js";
-import { getPendingRuntimeActionBatch } from "#harness/runtime-actions.js";
 import type { HarnessSession, SettledTurn, StepInput, StepResult } from "#harness/types.js";
 import { getTurnUsageState, takeSessionUsageDelta, toUsage } from "#harness/turn-tag-state.js";
 import type { TokenUsage } from "#shared/token-usage.js";
-import { getRuntimeActionRequestKey } from "#runtime/actions/keys.js";
 import {
   createAuthorizationCompletedEvent,
   createSessionStartedEvent,
@@ -94,13 +93,15 @@ import {
   TASK_UPDATE_SESSION_INSTRUCTION,
 } from "#execution/tasks/child/instructions.js";
 import { prepareWorkflowPreambleTrace } from "#execution/workflow-trace-context.js";
-import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
+import { derivePendingState } from "#execution/turn-pending-state.js";
+import { prepareHostRuntimeTurnContext } from "#execution/host-runtime-turn.js";
 import { recordSubagentUsageSpans } from "#execution/subagent-usage-span.js";
 import { reconcileSessionContinuationToken } from "#execution/reconcile-session-continuation-token.js";
 import { hydrateDurableSession, refreshSessionFromTurnAgent } from "#execution/session.js";
 import { resolveRuntimeCompiledArtifactsVersionedCacheKey } from "#runtime/cache-key.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
+import { throwHostRuntimeAtStepBoundary } from "#runtime/host-runtime/preflight.js";
 
 const TASK_DONE_WITH_PENDING_INPUT_ERROR_MESSAGE =
   "Task mode cannot complete while input requests remain pending.";
@@ -173,13 +174,17 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
 
   let durableSession = await readDurableSession(input.sessionState);
   const ctx = await deserializeContext(input.serializedContext);
+  const { effectiveAgent, hostRuntime } = await prepareHostRuntimeTurnContext(
+    ctx,
+    rawInput.input,
+    ctx.require(BundleKey),
+  );
   if (rawInput.input?.kind === "deliver") {
     ctx.set(TurnTaskDeliveryKey, rawInput.input.taskDeliveryId !== undefined);
   }
   const adapter = ctx.require(ChannelKey);
   const bundle = ctx.require(BundleKey);
   const tasksEnabled = bundle.resolvedAgent.config?.experimental?.tasks === true;
-  const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
   const taskUpdatesEnabled =
     isTaskOwnedSerializedContext(input.serializedContext) &&
     isTaskToolAvailable({
@@ -394,7 +399,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     }
   } catch (error) {
     await failChannelDeliveries(error);
-    throw error;
+    throwHostRuntimeAtStepBoundary(error);
   }
 
   const writer = input.parentWritable.getWriter();
@@ -466,6 +471,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     // or the pending batch would re-park and later re-dispatch.
     throwIfTurnAborted(input.abortSignal);
     stepResult = await runStep(ctx, initialSession, async (enrichedSession) => {
+      if (hostRuntime !== undefined) {
+        ctx.setVirtualContext(HostRuntimePreflightKey, hostRuntime);
+      }
       let schemaSession = resolveEffectiveOutputSchema({
         agentOutputSchema: effectiveAgent.turnAgent.outputSchema,
         input: resolved,
@@ -542,7 +550,9 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
           compactOnly: input.input?.kind === "compact",
           createRuntime: createWorkflowRuntime,
           handleEvent,
+          hostModel: effectiveAgent.hostModel,
           mode,
+          modelCallTimeoutMs: hostRuntime?.modelCallTimeoutMs,
           modelResolutionScope: {
             moduleMap: bundle.moduleMap,
             nodeId: bundle.nodeId,
@@ -559,7 +569,7 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   } catch (error) {
     if (!isTurnCancellation(error)) {
       await failChannelDeliveries(error);
-      throw error;
+      throwHostRuntimeAtStepBoundary(error);
     }
     writer.releaseLock();
     // Trace and instrumentation state are needed by the cancellation
@@ -671,34 +681,4 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
     serializedContext: nextSerializedContext,
     sessionState: nextState,
   };
-}
-
-/**
- * Derives the pending-state fields the turn workflow needs to choose
- * the right `NextDriverAction` arm at the park boundary.
- */
-function derivePendingState(session: HarnessSession): {
-  readonly authorizationAttemptIds?: readonly string[];
-  readonly authorizationNames?: readonly string[];
-  readonly hasPendingAuthorization: boolean;
-  readonly hasPendingInputBatch: boolean;
-  readonly pendingRuntimeActionKeys?: readonly string[];
-} {
-  const batch = getPendingRuntimeActionBatch(session.state);
-  const pendingAuth = getPendingAuthorization(session.state);
-  const base = {
-    authorizationAttemptIds: pendingAuth?.challenges.flatMap((challenge) =>
-      challenge.attemptId === undefined ? [] : [challenge.attemptId],
-    ),
-    authorizationNames: pendingAuth?.challenges.map((c) => c.name),
-    hasPendingAuthorization: pendingAuth !== undefined,
-    hasPendingInputBatch: hasPendingInputBatch(session.state),
-  };
-  if (batch !== undefined) {
-    return {
-      ...base,
-      pendingRuntimeActionKeys: batch.actions.map((action) => getRuntimeActionRequestKey(action)),
-    };
-  }
-  return base;
 }

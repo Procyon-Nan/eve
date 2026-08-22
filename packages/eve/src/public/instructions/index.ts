@@ -12,3 +12,4 @@ export {
 } from "#public/definitions/instructions.js";
 
 export type { DynamicResolveContext, DynamicSentinel } from "#shared/dynamic-tool-definition.js";
+export { hostRuntimeInstructions } from "#runtime/host-runtime/resolve-context.js";

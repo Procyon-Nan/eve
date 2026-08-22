@@ -8,9 +8,14 @@ import {
   SessionIdKey,
   InitiatorAuthKey,
   ContinuationTokenKey,
+  HostRuntimePreflightKey,
 } from "#context/keys.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { getAdapterKind } from "#channel/adapter.js";
+import {
+  attachHostRuntimeResolveHandle,
+  type HostRuntimeResolveScope,
+} from "#runtime/host-runtime/resolve-context.js";
 
 type ReadableContext = Pick<AlsContext, "get">;
 
@@ -23,6 +28,7 @@ type ReadableContext = Pick<AlsContext, "get">;
 export function buildResolveContext(
   ctx: ReadableContext,
   messages: readonly ModelMessage[],
+  hostRuntimeScope?: HostRuntimeResolveScope,
 ): DynamicResolveContext {
   const sessionId = ctx.get(SessionIdKey) ?? "";
   const currentAuth = ctx.get(AuthKey) ?? null;
@@ -31,7 +37,7 @@ export function buildResolveContext(
   const continuationToken = ctx.get(ContinuationTokenKey);
   const channelInstrumentation = ctx.get(ChannelInstrumentationKey);
 
-  return {
+  const result: DynamicResolveContext = {
     session: {
       id: sessionId,
       auth: {
@@ -46,4 +52,6 @@ export function buildResolveContext(
     },
     messages,
   };
+  attachHostRuntimeResolveHandle(result, ctx.get(HostRuntimePreflightKey), hostRuntimeScope);
+  return result;
 }

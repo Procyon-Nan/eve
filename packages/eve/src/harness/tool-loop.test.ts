@@ -3820,6 +3820,45 @@ describe("createToolLoopHarness", () => {
     expect(eventTypes).not.toContain("session.failed");
   });
 
+  it.each([
+    { emitEvents: true, method: "stream" as const },
+    { emitEvents: false, method: "generate" as const },
+  ])(
+    "composes caller cancellation with the host deadline for $method",
+    async ({ emitEvents, method }) => {
+      const caller = new AbortController();
+      const timeoutSignal = new AbortController().signal;
+      const combinedSignal = new AbortController().signal;
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+      const anySpy = vi.spyOn(AbortSignal, "any").mockReturnValue(combinedSignal);
+      setupMockAgent({
+        finishReason: "stop",
+        response: { messages: [{ content: "done", role: "assistant" }] },
+        text: "done",
+        toolCalls: [],
+        toolResults: [],
+      });
+      const { emit } = createEventCollector();
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", emitEvents ? emit : undefined, {
+          abortSignal: caller.signal,
+          modelCallTimeoutMs: 5_000,
+        }),
+      );
+
+      await runStep(createTestSession(), { message: "Hi" });
+
+      expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+      expect(anySpy).toHaveBeenCalledWith([caller.signal, timeoutSignal]);
+      const instance = vi.mocked(ToolLoopAgent).mock.results[0]?.value as
+        | Record<typeof method, ReturnType<typeof vi.fn>>
+        | undefined;
+      expect(instance?.[method]).toHaveBeenCalledWith(
+        expect.objectContaining({ abortSignal: combinedSignal }),
+      );
+    },
+  );
+
   it("does not retry or recover a model call once the turn signal has aborted", async () => {
     const abortController = new AbortController();
     const cancellation = new TurnCancelledError();
@@ -3849,6 +3888,10 @@ describe("createToolLoopHarness", () => {
 
   it("retries a model call after an undici body timeout", async () => {
     vi.useFakeTimers();
+    const attemptSignals = [new AbortController().signal, new AbortController().signal];
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => attemptSignals[timeoutSpy.mock.calls.length - 1]!);
     const timeout = new TypeError("terminated", {
       cause: Object.assign(new Error("Body Timeout Error"), {
         code: "UND_ERR_BODY_TIMEOUT",
@@ -3891,12 +3934,18 @@ describe("createToolLoopHarness", () => {
     } as MockAgentConstructor);
 
     try {
-      const runStep = createToolLoopHarness(createTestConfig());
+      const runStep = createToolLoopHarness(
+        createTestConfig("conversation", undefined, { modelCallTimeoutMs: 5_000 }),
+      );
       const pending = runStep(createTestSession(), { message: "Hi" });
       await vi.runAllTimersAsync();
       const result = await pending;
 
       expect(modelCallMock).toHaveBeenCalledTimes(2);
+      expect(timeoutSpy).toHaveBeenCalledTimes(2);
+      expect(modelCallMock.mock.calls.map(([options]) => options.abortSignal)).toEqual(
+        attemptSignals,
+      );
       expect(result.session.history).toEqual([
         { content: "Hi", role: "user" },
         { content: "Recovered", role: "assistant" },
@@ -8758,6 +8807,8 @@ describe("createToolLoopHarness", () => {
   });
 
   it("emits compaction.requested and compaction.completed when compaction triggers", async () => {
+    const timeoutSignal = new AbortController().signal;
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
     vi.mocked(shouldCompact).mockReturnValue(true);
     vi.mocked(compactMessages).mockResolvedValue([
       { content: "Summary of our conversation so far:", role: "user" },
@@ -8776,6 +8827,7 @@ describe("createToolLoopHarness", () => {
     const { emit, events } = createEventCollector();
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
+        modelCallTimeoutMs: 5_000,
         resolveModel: vi
           .fn()
           .mockResolvedValue({ modelId: "gpt-4", provider: "openai" } as LanguageModel),
@@ -8817,6 +8869,7 @@ describe("createToolLoopHarness", () => {
       sessionId: "test-session",
       turnId: "turn_0",
     });
+    expect(vi.mocked(compactMessages).mock.calls[0]?.[6]).toBe(timeoutSignal);
   });
 
   it("clears static and dynamic user instructions without rerunning lifecycle events", async () => {
@@ -8873,6 +8926,11 @@ describe("createToolLoopHarness", () => {
   });
 
   it("compacts user instructions as ordinary history without starting a model turn", async () => {
+    const caller = new AbortController();
+    const timeoutSignal = new AbortController().signal;
+    const combinedSignal = new AbortController().signal;
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+    vi.spyOn(AbortSignal, "any").mockReturnValue(combinedSignal);
     const compactedHistory: ModelMessage[] = [
       { content: "Summary of our conversation so far:", role: "user" },
       { content: "summary", role: "assistant" },
@@ -8883,7 +8941,9 @@ describe("createToolLoopHarness", () => {
     const onCompaction = vi.fn(() => []);
     const runStep = createToolLoopHarness(
       createTestConfig("conversation", emit, {
+        abortSignal: caller.signal,
         compactOnly: true,
+        modelCallTimeoutMs: 5_000,
         onCompaction,
         resolveModel: vi
           .fn()
@@ -8916,6 +8976,7 @@ describe("createToolLoopHarness", () => {
       { content: "Dynamic user instructions.", role: "user" },
       { content: "old reply", role: "assistant" },
     ]);
+    expect(vi.mocked(compactMessages).mock.calls[0]?.[6]).toBe(combinedSignal);
     expect(onCompaction).toHaveBeenCalledOnce();
     expect(ToolLoopAgent).not.toHaveBeenCalled();
     expect(getCompatibilityEventTypes(events)).toEqual([

@@ -4,6 +4,7 @@ import {
   AuthKey,
   ChannelInstrumentationKey,
   ContinuationTokenKey,
+  HostRuntimeContextKey,
   type Session,
   type SessionAuthContext,
   SessionIdKey,
@@ -147,6 +148,38 @@ function createMinimalBundle(): Parameters<typeof buildRunContext>[0]["bundle"] 
 }
 
 describe("buildRunContext", () => {
+  it("seeds only a validated durable host reference", () => {
+    const hostRuntime = {
+      acceptanceKey: "command-1",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque" },
+    };
+    const ctx = buildRunContext({
+      bundle: createMinimalBundle(),
+      run: {
+        adapter: { kind: "http" },
+        auth: null,
+        hostRuntime,
+        input: { message: "hi" },
+        mode: "conversation",
+      },
+    });
+
+    expect(ctx.get(HostRuntimeContextKey)).toEqual(hostRuntime);
+    expect(() =>
+      buildRunContext({
+        bundle: createMinimalBundle(),
+        run: {
+          adapter: { kind: "http" },
+          auth: null,
+          hostRuntime: { ownership: "root", reference: hostRuntime.reference } as never,
+          input: { message: "hi" },
+          mode: "conversation",
+        },
+      }),
+    ).toThrow("HOST_RUNTIME_REFERENCE_INVALID");
+  });
+
   it("seeds auth from the run input", () => {
     const ctx = buildRunContext({
       bundle: createMinimalBundle(),

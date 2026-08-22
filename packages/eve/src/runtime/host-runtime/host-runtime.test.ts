@@ -1,10 +1,29 @@
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
+import { ContextContainer } from "#context/container.js";
+import {
+  AuthKey,
+  HostRuntimeContextKey,
+  HostRuntimePreflightKey,
+  InitiatorAuthKey,
+  SessionIdKey,
+} from "#context/keys.js";
+import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { defineHostRuntime } from "#public/definitions/agent.js";
 import { HostRuntimeError, isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import {
+  prepareHostRuntimePreflight,
+  throwHostRuntimeAtStepBoundary,
+} from "#runtime/host-runtime/preflight.js";
 import { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
 import {
+  hostRuntimeInstructions,
+  hostRuntimeModel,
+  hostRuntimeTools,
+} from "#runtime/host-runtime/resolve-context.js";
+import {
+  validateDurableHostRuntimeContext,
   validateHostRuntimeAcceptanceKey,
   validateHostRuntimeDefinition,
   validateHostRuntimeParentLineage,
@@ -13,6 +32,7 @@ import {
   validateTrustedHostRuntimeInput,
 } from "#runtime/host-runtime/validation.js";
 import { createRuntimeSession, withRuntimeSession } from "#runtime/sessions/runtime-session.js";
+import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 
 const reference = { providerKind: "baigong-agent", value: "opaque-reference" } as const;
 const lineage = {
@@ -38,6 +58,13 @@ describe("host runtime contracts", () => {
       acceptanceKey: "command-1",
       reference,
     });
+    expect(
+      validateDurableHostRuntimeContext({
+        acceptanceKey: "command-1",
+        ownership: "root",
+        reference,
+      }),
+    ).toEqual({ acceptanceKey: "command-1", ownership: "root", reference });
 
     expect(() => validateHostRuntimeReference({ ...reference, apiKey: "secret" })).toThrowError(
       HostRuntimeError,
@@ -51,6 +78,9 @@ describe("host runtime contracts", () => {
     expect(() =>
       validateTrustedHostRuntimeInput({ acceptanceKey: "command-1", extra: true, reference }),
     ).toThrowError(HostRuntimeError);
+    expect(() => validateDurableHostRuntimeContext({ ownership: "root", reference })).toThrowError(
+      HostRuntimeError,
+    );
   });
 
   it("enforces reference, provider, acceptance-key, and lineage value bounds", () => {
@@ -86,6 +116,12 @@ describe("host runtime contracts", () => {
     ).toThrowError(HostRuntimeError);
     expect(() =>
       validateResolvedHostRuntime({ ...resolved, modelCallTimeoutMs: 0 }, { specialist: false }),
+    ).toThrowError(HostRuntimeError);
+    expect(() =>
+      validateResolvedHostRuntime(
+        { ...resolved, modelCallTimeoutMs: 2_147_483_648 },
+        { specialist: false },
+      ),
     ).toThrowError(HostRuntimeError);
     expect(() => validateResolvedHostRuntime(resolved, { specialist: true })).toThrowError(
       HostRuntimeError,
@@ -146,6 +182,128 @@ describe("host runtime registration", () => {
       session.hostRuntimeProviders.set(reference.providerKind, replacement);
       unregister();
       expect(session.hostRuntimeProviders.get(reference.providerKind)).toBe(replacement);
+    });
+  });
+});
+
+describe("host runtime preflight", () => {
+  function createContext(value = reference): ContextContainer {
+    const ctx = new ContextContainer();
+    ctx.set(SessionIdKey, "session-1");
+    ctx.set(HostRuntimeContextKey, {
+      acceptanceKey: "command-1",
+      ownership: "root",
+      reference: value,
+    });
+    return ctx;
+  }
+
+  it("shares one validated provider resolution within a step", async () => {
+    const session = createRuntimeSession("preflight-single-flight");
+    const resolved = {
+      instructions: "Use the locked policy.",
+      model: createModel(),
+      modelCallTimeoutMs: 5_000,
+      modelId: "host-model",
+    } as const;
+    const resolve = vi.fn(async () => resolved);
+
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({ providerKind: reference.providerKind, resolve });
+      const ctx = createContext();
+      const [first, second] = await Promise.all([
+        prepareHostRuntimePreflight(ctx),
+        prepareHostRuntimePreflight(ctx),
+      ]);
+
+      expect(first).toStrictEqual(resolved);
+      expect(second).toBe(first);
+      expect(ctx.get(HostRuntimePreflightKey)).toBe(first);
+      expect(resolve).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("resolves the durable reference again in a later step", async () => {
+    const session = createRuntimeSession("preflight-multi-step");
+    const resolve = vi.fn(async () => ({ model: createModel(), modelId: "host-model" }));
+
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({ providerKind: reference.providerKind, resolve });
+      await prepareHostRuntimePreflight(createContext());
+      await prepareHostRuntimePreflight(createContext());
+      expect(resolve).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("fails invalid snapshots atomically while preserving transient provider failures", async () => {
+    const invalidSession = createRuntimeSession("preflight-invalid");
+    await withRuntimeSession(invalidSession, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model: createModel(), modelId: "" })),
+      });
+      const failure = await prepareHostRuntimePreflight(createContext()).catch((error) => error);
+      expect(() => throwHostRuntimeAtStepBoundary(failure)).toThrow(
+        expect.objectContaining({ fatal: true, message: "HOST_RUNTIME_RESOLUTION_FAILED" }),
+      );
+    });
+
+    const transientSession = createRuntimeSession("preflight-transient");
+    await withRuntimeSession(transientSession, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => {
+          throw new Error("database unavailable");
+        }),
+      });
+      const failure = await prepareHostRuntimePreflight(createContext()).catch((error) => error);
+      expect(() => throwHostRuntimeAtStepBoundary(failure)).toThrow(failure);
+    });
+  });
+
+  it("exposes only capability-specific helpers to authored resolver context", async () => {
+    const session = createRuntimeSession("preflight-helpers");
+    const model = createModel();
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: async () => ({ instructions: "Business policy", model, modelId: "host-model" }),
+      });
+      const ctx = createContext();
+      ctx.set(AuthKey, null);
+      ctx.set(InitiatorAuthKey, null);
+      ctx.set(ChannelKey, { kind: "eve" });
+      await prepareHostRuntimePreflight(ctx);
+      const turnContext = buildResolveContext(ctx, [], {
+        capability: "instructions",
+        eventType: "turn.started",
+      });
+      const turnToolContext = buildResolveContext(ctx, [], {
+        capability: "tool",
+        eventType: "turn.started",
+      });
+      const stepContext = buildResolveContext(ctx, [], {
+        capability: "model",
+        eventType: "step.started",
+      });
+      const stepToolContext = buildResolveContext(ctx, [], {
+        capability: "tool",
+        eventType: "step.started",
+      });
+      const sessionContext = buildResolveContext(ctx, [], {
+        capability: "instructions",
+        eventType: "session.started",
+      });
+
+      expect(hostRuntimeModel(stepContext).model).toBe(model);
+      expect(hostRuntimeInstructions(turnContext)).toBe("Business policy");
+      expect(hostRuntimeTools(turnToolContext)).toBeUndefined();
+      expect(hostRuntimeTools(stepToolContext)).toBeUndefined();
+      expect(() => hostRuntimeInstructions(sessionContext)).toThrow(HostRuntimeError);
+      expect(() => hostRuntimeInstructions(turnToolContext)).toThrow(HostRuntimeError);
+      expect(() => hostRuntimeModel(turnContext)).toThrow(HostRuntimeError);
+      expect(Object.keys(turnContext)).toEqual(["session", "channel", "messages"]);
+      expect(JSON.stringify(turnContext)).not.toContain(reference.value);
     });
   });
 });

@@ -19,6 +19,7 @@ import {
   TurnDynamicInstructionsKey,
 } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 
 const log = createLogger("dynamic-instructions");
 
@@ -113,7 +114,10 @@ export async function dispatchDynamicInstructionEvent(input: {
 
   const resolveMessages = ctx.get(DynamicInstructionResolveMessagesKey) ?? messages;
   const pendingUserMessages = ctx.get(PendingDynamicInstructionUserMessagesKey) ?? [];
-  const resolveCtx = buildResolveContext(ctx, [...resolveMessages, ...pendingUserMessages]);
+  const resolveCtx = buildResolveContext(ctx, [...resolveMessages, ...pendingUserMessages], {
+    capability: "instructions",
+    eventType: event.type,
+  });
 
   const outcomes = await Promise.allSettled(
     matching.map(async (resolver) => {
@@ -141,6 +145,11 @@ export async function dispatchDynamicInstructionEvent(input: {
       }
     }),
   );
+
+  const hostFailure = outcomes.find(
+    (outcome) => outcome.status === "rejected" && isHostRuntimeError(outcome.reason),
+  );
+  if (hostFailure?.status === "rejected") throw hostFailure.reason;
 
   const durable = { ...ctx.get(durableKey) };
 

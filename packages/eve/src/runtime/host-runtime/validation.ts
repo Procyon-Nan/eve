@@ -2,6 +2,7 @@ import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 import { isBrandedToolEntry, type DynamicToolSet } from "#shared/dynamic-tool-definition.js";
 import {
   HOST_RUNTIME_DEFINITION_KIND,
+  type DurableHostRuntimeContext,
   type HostRuntimeDefinition,
   type HostRuntimeParentLineage,
   type HostRuntimeReference,
@@ -14,6 +15,7 @@ export const HOST_RUNTIME_PROVIDER_KIND_PATTERN = /^[a-z][a-z0-9_-]{0,79}$/;
 export const MAX_HOST_RUNTIME_REFERENCE_VALUE_LENGTH = 512;
 export const MAX_HOST_RUNTIME_ACCEPTANCE_KEY_LENGTH = 200;
 const MAX_MODEL_ID_LENGTH = 255;
+const MAX_MODEL_CALL_TIMEOUT_MS = 2_147_483_647;
 const RESOLVED_RUNTIME_KEYS = new Set([
   "contextWindowTokens",
   "delegatedSubagentNames",
@@ -80,6 +82,50 @@ export function validateTrustedHostRuntimeInput(value: unknown): TrustedHostRunt
   };
 }
 
+export function validateDurableHostRuntimeContext(value: unknown): DurableHostRuntimeContext {
+  const record = expectAllowedRecord(value, [
+    "acceptanceKey",
+    "ownership",
+    "parent",
+    "reference",
+    "releasedOutcome",
+  ]);
+  const ownership = record.ownership;
+  if (ownership !== "root" && ownership !== "specialist" && ownership !== "inherited") {
+    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+  }
+  if (ownership === "root" && record.acceptanceKey === undefined) {
+    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+  }
+  if (ownership === "specialist" && record.parent === undefined) {
+    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+  }
+  const releasedOutcome = record.releasedOutcome;
+  if (
+    releasedOutcome !== undefined &&
+    releasedOutcome !== "completed" &&
+    releasedOutcome !== "failed" &&
+    releasedOutcome !== "cancelled" &&
+    releasedOutcome !== "start_failed"
+  ) {
+    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+  }
+
+  const result: { -readonly [K in keyof DurableHostRuntimeContext]: DurableHostRuntimeContext[K] } =
+    {
+      ownership,
+      reference: validateHostRuntimeReference(record.reference),
+    };
+  if (record.acceptanceKey !== undefined) {
+    result.acceptanceKey = validateHostRuntimeAcceptanceKey(record.acceptanceKey);
+  }
+  if (record.parent !== undefined) {
+    result.parent = validateHostRuntimeParentLineage(record.parent);
+  }
+  if (releasedOutcome !== undefined) result.releasedOutcome = releasedOutcome;
+  return result;
+}
+
 export function validateHostRuntimeAcceptanceKey(value: unknown): string {
   if (
     typeof value !== "string" ||
@@ -117,7 +163,7 @@ export function validateResolvedHostRuntime(
     throw new HostRuntimeError("HOST_RUNTIME_RESOLUTION_FAILED");
   }
   validateOptionalPositiveInteger(resolved.contextWindowTokens);
-  validateOptionalPositiveInteger(resolved.modelCallTimeoutMs);
+  validateOptionalPositiveInteger(resolved.modelCallTimeoutMs, MAX_MODEL_CALL_TIMEOUT_MS);
   if (resolved.instructions !== undefined && typeof resolved.instructions !== "string") {
     throw new HostRuntimeError("HOST_RUNTIME_RESOLUTION_FAILED");
   }
@@ -157,12 +203,22 @@ function expectStrictRecord(value: unknown, keys: readonly string[]): Record<str
   return value;
 }
 
+function expectAllowedRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (!isRecord(value) || Object.keys(value).some((key) => !keys.includes(key))) {
+    throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+  }
+  return value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateOptionalPositiveInteger(value: unknown): void {
-  if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) <= 0)) {
+function validateOptionalPositiveInteger(value: unknown, maximum = Number.MAX_SAFE_INTEGER): void {
+  if (
+    value !== undefined &&
+    (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > maximum)
+  ) {
     throw new HostRuntimeError("HOST_RUNTIME_RESOLUTION_FAILED");
   }
 }

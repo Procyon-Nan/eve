@@ -20,6 +20,7 @@ import {
   createTurnStartedEvent,
 } from "#protocol/message.js";
 import type { RuntimeDynamicModelReference } from "#runtime/agent/bootstrap.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 
 const DYNAMIC_MODEL_SOURCE: RuntimeDynamicModelReference = {
   eventNames: ["session.started", "turn.started", "step.started"],
@@ -257,6 +258,31 @@ describe("dynamic model lifecycle", () => {
 
     expect(ctx.get(TurnDynamicModelReferenceKey)).toBeNull();
     expect(getActiveDynamicModelSelection(ctx)).toBeNull();
+  });
+
+  it("preserves deterministic host-runtime failures for workflow classification", async () => {
+    const failure = new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+    const moduleMap = createModuleMap({
+      default: {
+        model: defineDynamic({
+          events: {
+            "turn.started": () => {
+              throw failure;
+            },
+          },
+        }),
+      },
+    });
+
+    await expect(
+      dispatchDynamicModelEvent({
+        ctx: new ContextContainer(),
+        dynamicModel: DYNAMIC_MODEL_SOURCE,
+        event: createTurnStartedEvent({ sequence: 0, turnId: "turn_0" }),
+        messages: [],
+        scope: { moduleMap, nodeId: undefined },
+      }),
+    ).rejects.toBe(failure);
   });
 
   it("rejects null and malformed selections", async () => {

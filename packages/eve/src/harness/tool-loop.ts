@@ -69,6 +69,7 @@ import {
 } from "#protocol/message.js";
 import type { RuntimeTraceContext } from "#protocol/message.js";
 import { ASK_QUESTION_TOOL_NAME } from "#runtime/framework-tools/ask-question.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 import { resolveAgentsAnnouncement } from "#harness/handles/prompt.js";
 import { getAgentHandleStore } from "#harness/handles/store.js";
 import {
@@ -655,6 +656,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       error: unknown,
       failureState: ReturnType<typeof getHarnessEmissionState>,
     ): Promise<StepResult> => {
+      if (isHostRuntimeError(error)) throw error;
       throwIfTurnAborted(config.abortSignal);
       if (turnSpan) {
         recordErrorOnSpan(turnSpan, error);
@@ -748,6 +750,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             force: true,
             messages: [...session.history],
             model: resolvedModel.model,
+            modelCallTimeoutMs: config.modelCallTimeoutMs,
             onCompaction: config.onCompaction,
             resolveModel: config.resolveModel,
             runtimeIdentity: config.runtimeIdentity,
@@ -1234,6 +1237,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       emissionState,
       messages,
       model,
+      modelCallTimeoutMs: config.modelCallTimeoutMs,
       onCompaction: config.onCompaction,
       resolveModel: config.resolveModel,
       runtimeIdentity: config.runtimeIdentity,
@@ -1503,6 +1507,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const agent = new ToolLoopAgent(agentSettings);
 
       const executeModelCall = async (): Promise<HarnessStepResult> => {
+        const modelCallSignal = createModelCallAbortSignal(
+          config.abortSignal,
+          config.modelCallTimeoutMs,
+        );
         if (emit) {
           const hiddenRuntimeActionToolNames = [...config.tools]
             .filter(
@@ -1516,7 +1524,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
             ...hiddenRuntimeActionToolNames,
           ]);
           const streamResult = await agent.stream({
-            abortSignal: config.abortSignal,
+            abortSignal: modelCallSignal,
             messages: callMessages,
           });
           const {
@@ -1567,7 +1575,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           });
         }
         const generateResult = await agent.generate({
-          abortSignal: config.abortSignal,
+          abortSignal: modelCallSignal,
           messages: callMessages,
         });
         throwIfTurnAborted(config.abortSignal);
@@ -3133,6 +3141,7 @@ async function maybeCompact(input: {
   readonly force?: boolean;
   readonly messages: ModelMessage[];
   readonly model: LanguageModel;
+  readonly modelCallTimeoutMs?: number;
   readonly onCompaction?: ToolLoopHarnessConfig["onCompaction"];
   readonly resolveModel: ToolLoopHarnessConfig["resolveModel"];
   readonly runtimeIdentity?: ToolLoopHarnessConfig["runtimeIdentity"];
@@ -3173,7 +3182,7 @@ async function maybeCompact(input: {
     compaction.providerOptions,
     input.telemetry,
     buildGatewayAttributionHeaders(compaction.model, input.runtimeIdentity),
-    input.abortSignal,
+    createModelCallAbortSignal(input.abortSignal, input.modelCallTimeoutMs),
     input.force === true,
   );
 
@@ -3195,6 +3204,17 @@ async function maybeCompact(input: {
   }
 
   return { messages, session };
+}
+
+function createModelCallAbortSignal(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): AbortSignal | undefined {
+  if (timeoutMs === undefined) return callerSignal;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return callerSignal === undefined
+    ? timeoutSignal
+    : AbortSignal.any([callerSignal, timeoutSignal]);
 }
 
 /**

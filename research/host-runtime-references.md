@@ -64,7 +64,8 @@ request-scoped values and never enter durable state.
 
 The reference has no arbitrary extension fields. `providerKind` must match
 `^[a-z][a-z0-9_-]{0,79}$`; `value` is 1–512 characters. Model identifiers are 1–255 characters,
-and token limits and timeouts are positive safe integers.
+token limits are positive safe integers, and timeouts are positive integers no greater than
+2,147,483,647 milliseconds so the runtime deadline cannot overflow Node.js timers.
 
 ### Provider lifecycle
 
@@ -208,7 +209,7 @@ the same commit as its code.
 - [x] Phase 1: Add contracts, validation, errors, provider registration, and specialist authoring
       types.
 - [x] Phase 2: Add trusted root-turn ingress, atomic durable acceptance, and the status probe.
-- [ ] Phase 3: Add unified preflight, model/instruction/tool composition, and model-call timeout.
+- [x] Phase 3: Add unified preflight, model/instruction/tool composition, and model-call timeout.
 - [ ] Phase 4: Add top-level specialist authorization, factory creation, durable lineage, and
       replay-safe dispatch for plain, task, and Workflow calls.
 - [ ] Phase 5: Add root and specialist terminal release across completed, failed, cancelled, and

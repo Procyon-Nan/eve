@@ -23,13 +23,13 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
   extension: { current: 1, supported: [1], dropped: {} },
   tool: { current: 13, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], dropped: {} },
   dynamicTool: {
-    current: 19,
-    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    current: 20,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
     dropped: {},
   },
   channel: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },
   schedule: { current: 3, supported: [1, 2, 3], dropped: {} },
-  subagent: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },
+  subagent: { current: 6, supported: [1, 2, 3, 4, 5, 6], dropped: {} },
   connection: { current: 5, supported: [1, 2, 3, 4, 5], dropped: {} },
   hook: {
     current: 15,
@@ -54,8 +54,8 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
   },
   instructions: { current: 2, supported: [1, 2], dropped: {} },
   dynamicInstructions: {
-    current: 14,
-    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    current: 15,
+    supported: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     dropped: {},
   },
   config: { current: 1, supported: [1], dropped: {} },

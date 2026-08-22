@@ -26,6 +26,9 @@ export {
   defineDynamic,
   defineHostRuntime,
   defineRemoteAgent,
+  hostRuntimeInstructions,
+  hostRuntimeModel,
+  hostRuntimeTools,
   registerHostRuntimeProvider,
   withHostRuntime,
 } from "../../src/public/index.ts";

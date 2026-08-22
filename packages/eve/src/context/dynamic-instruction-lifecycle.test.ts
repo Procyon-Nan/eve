@@ -24,6 +24,7 @@ import {
 import type { ResolvedDynamicInstructionsResolver } from "#runtime/types.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import type { DynamicResolveContext } from "#shared/dynamic-tool-definition.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 
 function createResolver(
   slug: string,
@@ -211,6 +212,22 @@ describe("dispatchDynamicInstructionEvent", () => {
     });
 
     expect(buildDynamicInstructionMessages(ctx)).toEqual([]);
+  });
+
+  it("does not isolate deterministic host-runtime failures", async () => {
+    const failure = new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+    const resolver = createResolver("host", ["session.started"], () => {
+      throw failure;
+    });
+
+    await expect(
+      dispatchDynamicInstructionEvent({
+        ctx: createCtx(),
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("session.started"),
+      }),
+    ).rejects.toBe(failure);
   });
 
   it("unions messages from different resolver slugs", async () => {

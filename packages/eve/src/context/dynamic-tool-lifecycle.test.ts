@@ -35,6 +35,7 @@ import {
 } from "#context/keys.js";
 import type { ResolvedDynamicToolResolver } from "#runtime/types.js";
 import { createSessionStartedEvent, type UnstampedMessageStreamEvent } from "#protocol/message.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 
 // Re-implement the naming logic here to test it independently
 // (the production function is unexported — testing via the public behavior)
@@ -1309,6 +1310,22 @@ describe("dispatchDynamicToolEvent", () => {
     const tools = buildDynamicTools(ctx);
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe("working");
+  });
+
+  it("does not isolate deterministic host-runtime failures", async () => {
+    const failure = new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+    const resolver = createResolver("host", ["session.started"], () => {
+      throw failure;
+    });
+
+    await expect(
+      dispatchDynamicToolEvent({
+        ctx: createCtx(),
+        resolvers: [resolver],
+        messages: [],
+        event: makeEvent("session.started"),
+      }),
+    ).rejects.toBe(failure);
   });
 
   it("uses file slug when handler returns a single entry", async () => {

@@ -44,6 +44,7 @@ export type {
   DynamicToolResult,
 } from "#shared/dynamic-tool-definition.js";
 export { type SessionContext } from "#public/definitions/callback-context.js";
+export { hostRuntimeTools } from "#runtime/host-runtime/resolve-context.js";
 export {
   toolResultFrom,
   type MatchedConnectionResult,

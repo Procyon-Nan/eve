@@ -12,8 +12,28 @@ import { defineAgent } from "#public/definitions/agent.js";
 import { defineRemoteAgent } from "#public/definitions/remote-agent.js";
 import { createSessionStartedEvent, createTurnStartedEvent } from "#protocol/message.js";
 import type { ResolvedDynamicSubagentResolver } from "#runtime/subagents/registry.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 
 describe("dynamic subagent lifecycle", () => {
+  it("does not isolate deterministic host-runtime failures", async () => {
+    const failure = new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+    const { resolver } = createResolver({
+      handler: () => {
+        throw failure;
+      },
+    });
+
+    await expect(
+      dispatchDynamicSubagentEvent({
+        ctx: createContext(),
+        event: createSessionStartedEvent(),
+        messages: [],
+        persistentSessions: false,
+        resolvers: [resolver],
+      }),
+    ).rejects.toBe(failure);
+  });
+
   it("omits a subagent when its resolver returns null", async () => {
     const ctx = createContext();
     const { resolver } = createResolver({ handler: () => null });

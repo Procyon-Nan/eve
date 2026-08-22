@@ -76,6 +76,10 @@ export interface CreateExecutionNodeStepInput {
   readonly createRuntime: CreateRuntime;
   readonly handleEvent?: HandleEventFn;
   readonly mode: RunMode;
+  /** Live host model paired with the effective host-owned model reference. */
+  readonly hostModel?: LanguageModel;
+  /** Deadline applied independently to each model request. */
+  readonly modelCallTimeoutMs?: number;
   readonly modelResolutionScope: RuntimeModelResolutionScope;
   readonly node: ResolvedRuntimeAgentNode;
   /** Local subagent parent lineage forwarded to the harness preamble. */
@@ -92,7 +96,7 @@ export interface CreateExecutionNodeStepInput {
  * tool, sandbox, and subagent wiring.
  */
 export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): StepFn {
-  const resolveModel = createRuntimeModelResolver(input.modelResolutionScope);
+  const resolveModel = createRuntimeModelResolver(input.modelResolutionScope, input.hostModel);
   const dispatchModelEvent =
     input.node.turnAgent.dynamicModel === undefined
       ? undefined
@@ -112,6 +116,7 @@ export function createExecutionNodeStep(input: CreateExecutionNodeStepInput): St
     webSearchProvider: input.node.agent.webSearchProvider,
     handleEvent: input.handleEvent,
     instrumentation,
+    modelCallTimeoutMs: input.modelCallTimeoutMs,
     mode: input.mode,
     onCompaction: preserveFrameworkStateOnCompaction,
     persistentSubagentSessions:
@@ -166,7 +171,9 @@ export function buildRuntimeIdentity(node: ResolvedRuntimeAgentNode): RuntimeIde
 
 function createRuntimeModelResolver(
   scope: RuntimeModelResolutionScope,
+  hostModel?: LanguageModel,
 ): (modelReference: Parameters<typeof resolveRuntimeModelReference>[0]) => Promise<LanguageModel> {
+  if (hostModel !== undefined) return async () => hostModel;
   return (modelReference) => resolveRuntimeModelReference(modelReference, scope);
 }
 

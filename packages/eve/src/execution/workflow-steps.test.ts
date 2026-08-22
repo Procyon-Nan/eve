@@ -8,6 +8,8 @@ import {
   AuthKey,
   ContinuationTokenKey,
   DynamicSubagentAgentConfigKey,
+  HostRuntimeContextKey,
+  HostRuntimePreflightKey,
   ModeKey,
   ParentSessionKey,
   SessionCallbackKey,
@@ -52,6 +54,7 @@ import { emitTerminalSessionFailureStep } from "#execution/terminal-session-fail
 import { resolveEffectiveOutputSchema } from "#execution/effective-output-schema.js";
 import { turnStep } from "#execution/workflow-steps.js";
 import { routeProxiedDeliverStep } from "#execution/proxied-deliver-step.js";
+import { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
 import {
   LATEST_DEPLOYMENT_UNSUPPORTED_MESSAGE,
   turnWorkflowReference,
@@ -1393,6 +1396,90 @@ describe("dispatchRuntimeActionsStep", () => {
 });
 
 describe("turnStep", () => {
+  it("preflights one host snapshot per step and clears an old root reference for ordinary input", async () => {
+    const compiledBundle = {
+      adapterRegistry: {
+        adaptersByKind: new Map([[threadContextAdapter.kind, threadContextAdapter]]),
+      },
+      compiledArtifactsSource: {} as never,
+      graph: {
+        nodesByNodeId: new Map(),
+        root: { sandboxRegistry: { sandbox: null }, turnAgent: TestTurnAgent },
+      },
+      moduleMap: { nodes: {} },
+      hookRegistry: createEmptyHookRegistry(),
+      resolvedAgent: { config: {} },
+      subagentRegistry: {},
+      toolRegistry: {},
+      turnAgent: TestTurnAgent,
+    } as never;
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue(compiledBundle);
+    installSessionStoreMocks([createStubSession(), createStubSession()]);
+
+    const model = {
+      doGenerate: vi.fn(),
+      doStream: vi.fn(),
+      modelId: "host-model",
+      provider: "test",
+      specificationVersion: "v3" as const,
+    } as never;
+    const observed: Array<{
+      readonly hostModel: boolean;
+      readonly prepared: boolean;
+      readonly timeout?: number;
+    }> = [];
+    vi.mocked(createExecutionNodeStep).mockImplementation((input) => {
+      return async (session): Promise<StepResult> => {
+        observed.push({
+          hostModel: input.hostModel === model,
+          prepared: loadContext().get(HostRuntimePreflightKey) !== undefined,
+          timeout: input.modelCallTimeoutMs,
+        });
+        return { next: { done: true, output: "ok" }, session };
+      };
+    });
+    const resolve = vi.fn(async () => ({
+      model,
+      modelCallTimeoutMs: 5_000,
+      modelId: "host-model",
+    }));
+    const unregister = registerHostRuntimeProvider({ providerKind: "workflow-test", resolve });
+
+    try {
+      const first = await turnStep({
+        input: {
+          hostRuntime: {
+            acceptanceKey: "command-1",
+            ownership: "root",
+            reference: { providerKind: "workflow-test", value: "opaque" },
+          },
+          kind: "deliver",
+          payloads: [{ message: "host turn" }],
+        },
+        parentWritable: createTestWritable("host-turn"),
+        serializedContext: createSerializedContext(),
+        sessionState: createStubSessionState(),
+      });
+      expect(first.serializedContext).toHaveProperty(HostRuntimeContextKey.name);
+
+      const second = await turnStep({
+        input: { kind: "deliver", payloads: [{ message: "ordinary turn" }] },
+        parentWritable: createTestWritable("ordinary-turn"),
+        serializedContext: first.serializedContext,
+        sessionState: first.sessionState,
+      });
+
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(observed).toEqual([
+        { hostModel: false, prepared: true, timeout: 5_000 },
+        { hostModel: false, prepared: false, timeout: undefined },
+      ]);
+      expect(second.serializedContext).not.toHaveProperty(HostRuntimeContextKey.name);
+    } finally {
+      unregister();
+    }
+  });
+
   it("routes remote task HITL only to the parent callback", async () => {
     const inputRequested = vi.fn();
     const remoteTaskAdapter: ChannelAdapter = {

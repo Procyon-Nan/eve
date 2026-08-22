@@ -21,6 +21,7 @@ import {
 import { normalizeDynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import { normalizeDynamicRemoteAgentConfig } from "#runtime/subagents/dynamic-remote-agent-config.js";
 import { toErrorMessage } from "#shared/errors.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 
 const log = createLogger("dynamic-subagents");
 const ALLOWED_DYNAMIC_SUBAGENT_EVENTS = new Set(["session.started", "turn.started"]);
@@ -95,6 +96,10 @@ async function resolveSelections(input: {
       ] as const;
     }),
   );
+  const hostFailure = outcomes.find(
+    (outcome) => outcome.status === "rejected" && isHostRuntimeError(outcome.reason),
+  );
+  if (hostFailure?.status === "rejected") throw hostFailure.reason;
   const selections: Record<string, DurableDynamicSubagentSelection> = {};
 
   for (let index = 0; index < outcomes.length; index += 1) {

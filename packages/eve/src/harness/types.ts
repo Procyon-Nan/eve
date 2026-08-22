@@ -269,6 +269,8 @@ export type HandleEventFn = (
 export interface ToolLoopHarnessConfig {
   /** Cancellation signal for the active turn. */
   readonly abortSignal?: AbortSignal;
+  /** Deadline applied independently to each model request. */
+  readonly modelCallTimeoutMs?: number;
   /**
    * Session-level capabilities. The harness reads
    * {@link SessionCapabilities.requestInput} when assembling the

@@ -22,6 +22,7 @@ import {
   type RuntimeModelResolutionScope,
 } from "#runtime/agent/resolve-model.js";
 import type { DynamicToolEventName } from "#shared/dynamic-tool-definition.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 import { toErrorMessage } from "#shared/errors.js";
 
 const ALLOWED_DYNAMIC_MODEL_EVENTS = new Set<DynamicToolEventName>([
@@ -115,7 +116,13 @@ export async function dispatchDynamicModelEvent(input: {
       );
     }
 
-    const rawResult = await handler(input.event, buildResolveContext(input.ctx, input.messages));
+    const rawResult = await handler(
+      input.event,
+      buildResolveContext(input.ctx, input.messages, {
+        capability: "model",
+        eventType: input.event.type,
+      }),
+    );
     const selection = await resolveRuntimeModelSelection({
       durability: input.event.type === "step.started" ? "live" : "durable",
       selection: rawResult as never,
@@ -124,6 +131,7 @@ export async function dispatchDynamicModelEvent(input: {
 
     setSelectionForEvent(input.ctx, input.event.type, selection);
   } catch (error) {
+    if (isHostRuntimeError(error)) throw error;
     throw isDynamicModelSelectionError(error) ? error : new DynamicModelSelectionError(error);
   }
 }
