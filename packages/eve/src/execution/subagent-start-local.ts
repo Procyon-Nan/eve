@@ -79,12 +79,8 @@ export async function startLocalSubagent(input: {
     source.type === "runtime" &&
     action.subagentName === "agent" &&
     input.parentHostRuntime !== undefined
-      ? {
-          ownership: "inherited",
-          reference: input.parentHostRuntime.reference,
-        }
+      ? { ownership: "inherited", reference: input.parentHostRuntime.reference }
       : undefined;
-  const childHostRuntime = preparedHostRuntime.hostRuntime ?? inheritedHostRuntime;
   const childRuntime = createWorkflowRuntime({
     compiledArtifactsSource: input.bundle.compiledArtifactsSource,
     dynamicSubagentAgentConfig: preparedHostRuntime.config,
@@ -100,7 +96,7 @@ export async function startLocalSubagent(input: {
     fanoutSize: input.fanoutSize,
     initiatorAuth: input.initiatorAuth,
     graph: input.bundle.graph,
-    hostRuntime: childHostRuntime,
+    hostRuntime: preparedHostRuntime.hostRuntime ?? inheritedHostRuntime,
     parentContinuationToken: input.parentContinuationToken,
     parentTraceContext: input.parentTraceContext,
     persistentSessions: input.persistentSessions,
@@ -108,7 +104,6 @@ export async function startLocalSubagent(input: {
     session: input.session,
     source,
   });
-
   const targetKind = source.type === "runtime" ? ("agent/self" as const) : ("agent/local" as const);
   const { identity, operation } = mintStartOperation({
     callId: action.callId,
@@ -117,19 +112,12 @@ export async function startLocalSubagent(input: {
     parentSessionId: input.session.sessionId,
     parentTurnId: input.batchEvent.turnId,
   });
-  // Ownership is recorded before the start side effect, and the prepared
-  // (or rejected) store rides every outcome into the step result. The
-  // guarantee is intra-step: a crash between the accepted start and the
-  // step-result commit still replays the whole dispatch step, so the
-  // orphan window shrinks to that boundary rather than disappearing.
+  const hostRuntime = preparedHostRuntime.hostRuntime;
   const preparedSession = prepareAgentStart(input.currentSession, {
     hostRuntime:
-      preparedHostRuntime.hostRuntime?.parent === undefined
+      hostRuntime?.parent === undefined
         ? undefined
-        : {
-            parent: preparedHostRuntime.hostRuntime.parent,
-            reference: preparedHostRuntime.hostRuntime.reference,
-          },
+        : { parent: hostRuntime.parent, reference: hostRuntime.reference },
     identity,
     operation,
     target: { continuationToken: childContinuationToken, kind: targetKind },
