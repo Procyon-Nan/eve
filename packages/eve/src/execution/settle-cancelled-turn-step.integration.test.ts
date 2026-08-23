@@ -13,6 +13,7 @@ import {
   type AgentHandle,
 } from "#harness/handles/store.js";
 import type { HarnessSession } from "#harness/types.js";
+import { readPendingHostRuntimeReleases } from "#harness/host-runtime-releases.js";
 
 /**
  * The cancellation epilogue is the last write that can move a cancelled
@@ -121,6 +122,45 @@ describe("settleCancelledTurnStep handle store", () => {
           PARKED_HANDLE,
         ],
       });
+    });
+  });
+
+  it("terminally settles a cancelled specialist call", async () => {
+    const runtime = createTestRuntime({ agent: { name: "settle-cancelled-specialist" } });
+    const specialist: AgentHandle = {
+      ...RUNNING_HANDLE,
+      hostRuntime: {
+        parent: {
+          callId: "call-1",
+          rootSessionId: PARENT_SESSION_ID,
+          sessionId: PARENT_SESSION_ID,
+          subagentName: "research",
+          turnId: "turn-1",
+        },
+        reference: { providerKind: "baigong-agent", value: "opaque-specialist" },
+      },
+    };
+
+    await runtime.run(async () => {
+      const result = await settleCancelledTurnStep({
+        parentWritable: new WritableStream<Uint8Array>({ write() {} }),
+        serializedContext: buildSerializedContext(),
+        sessionState: createDurableSessionState({
+          session: createCancelledTurnSession([specialist]),
+        }),
+      });
+
+      expect(getAgentHandleStore(result.sessionState.snapshot?.session.state)).toEqual({
+        handles: [],
+      });
+      expect(readPendingHostRuntimeReleases(result.sessionState.snapshot?.session ?? {})).toEqual([
+        {
+          outcome: "cancelled",
+          parent: specialist.hostRuntime?.parent,
+          reference: specialist.hostRuntime?.reference,
+          sessionId: "child-session-running",
+        },
+      ]);
     });
   });
 });

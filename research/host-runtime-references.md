@@ -1,7 +1,7 @@
 ---
 issue: TBD
 status: in-progress
-last_updated: "2026-08-22"
+last_updated: "2026-08-23"
 ---
 
 # Trusted host runtime references
@@ -212,7 +212,7 @@ the same commit as its code.
 - [x] Phase 3: Add unified preflight, model/instruction/tool composition, and model-call timeout.
 - [x] Phase 4: Add top-level specialist authorization, factory creation, durable lineage, and
       replay-safe dispatch for plain, task, and Workflow calls.
-- [ ] Phase 5: Add root and specialist terminal release across completed, failed, cancelled, and
+- [x] Phase 5: Add root and specialist terminal release across completed, failed, cancelled, and
       start-failed paths.
 - [ ] Phase 6: Complete public documentation, extension compatibility metadata, full validation,
       and final code review.

@@ -22,6 +22,12 @@ import { claimHookOwnership, disposeHook, isHookConflictError } from "#execution
 import type { NextDriverAction } from "#execution/next-driver-action.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
 import { runProxySubagentEventStep } from "#execution/subagent-event-proxy-step.js";
+import { installRootHostRuntimeStep } from "#execution/host-runtime-context-step.js";
+import {
+  flushHostRuntimeReleases,
+  ownsRootHostRuntime,
+  settleRootHostRuntime,
+} from "#execution/host-runtime-finalization.js";
 import {
   createTurnCancellationControl,
   type TurnCancellationControl,
@@ -101,7 +107,11 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
     }
 
     while (true) {
-      const result = await turnStep(cursor.createStepInput(nextStepInput, cancellation?.signal));
+      let result = await turnStep(cursor.createStepInput(nextStepInput, cancellation?.signal));
+      result = {
+        ...result,
+        sessionState: await flushHostRuntimeReleases(result.sessionState),
+      };
       const pendingActionKeys =
         result.action === "dispatch-workflow-runtime-actions" || result.action === "park"
           ? result.pendingRuntimeActionKeys
@@ -147,6 +157,13 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
       }
 
       if (result.action === "done") {
+        result = {
+          ...result,
+          serializedContext: await settleRootHostRuntime({
+            outcome: result.isError === true ? "failed" : "completed",
+            serializedContext: result.serializedContext,
+          }),
+        };
         await cancellation?.dispose();
         await cursor.finish(
           result,
@@ -186,7 +203,10 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
           sessionState: cursor.sessionState,
         });
         const initialAcceptedAtMs = dispatchResult.results.length === 0 ? undefined : Date.now();
-        await cursor.adopt(dispatchResult);
+        await cursor.adopt({
+          ...dispatchResult,
+          sessionState: await flushHostRuntimeReleases(dispatchResult.sessionState),
+        });
         await acknowledgeDelegatedTasksStep({ tasks: dispatchResult.pendingTasks });
 
         const results = await waitForRuntimeActionResults({
@@ -222,6 +242,15 @@ async function runTurnOwnedWorkflow(input: TurnWorkflowInput): Promise<void> {
 
         if (!canPark) throw new Error(TASK_MODE_WAIT_ERROR_MESSAGE);
 
+        if (!result.hasPendingAuthorization || result.settled !== undefined) {
+          result = {
+            ...result,
+            serializedContext: await settleRootHostRuntime({
+              outcome: result.settled?.isError === true ? "failed" : "completed",
+              serializedContext: result.serializedContext,
+            }),
+          };
+        }
         await cancellation?.dispose();
         await cursor.finish(
           result,
@@ -395,6 +424,18 @@ async function waitForRuntimeActionResults(input: {
         sessionState: input.cursor.sessionState,
       });
       await input.cursor.adopt(proxyResult);
+      if (
+        value.kind === "subagent-input-request" &&
+        ownsRootHostRuntime(input.cursor.serializedContext)
+      ) {
+        await input.cursor.adopt({
+          serializedContext: await settleRootHostRuntime({
+            outcome: "completed",
+            serializedContext: input.cursor.serializedContext,
+          }),
+          sessionState: input.cursor.sessionState,
+        });
+      }
       continue;
     }
 
@@ -406,6 +447,19 @@ async function waitForRuntimeActionResults(input: {
       await input.cursor.send({ kind: "turn-delivery-accepted", requestId: value.requestId });
       pendingDeliveryRequest = undefined;
 
+      if (
+        value.delivery.hostRuntime !== undefined ||
+        ownsRootHostRuntime(input.cursor.serializedContext)
+      ) {
+        await input.cursor.adopt({
+          serializedContext: await installRootHostRuntimeStep({
+            hostRuntime: value.delivery.hostRuntime,
+            serializedContext: input.cursor.serializedContext,
+          }),
+          sessionState: input.cursor.sessionState,
+        });
+      }
+
       const routed = await routeDeliverToChildren({
         delivery: value.delivery,
         parentWritable: input.cursor.parentWritable,
@@ -414,7 +468,9 @@ async function waitForRuntimeActionResults(input: {
       });
       await input.cursor.adopt({
         serializedContext: routed.serializedContext ?? input.cursor.serializedContext,
-        sessionState: routed.sessionState ?? input.cursor.sessionState,
+        sessionState: await flushHostRuntimeReleases(
+          routed.sessionState ?? input.cursor.sessionState,
+        ),
       });
       if (routed.kind === "cancel-turn") {
         return routed.kind;
@@ -431,13 +487,24 @@ async function runLegacyTurnWorkflow(input: TurnWorkflowInput): Promise<void> {
 
   try {
     while (true) {
-      const result = await turnStep(currentStepInput);
+      let result = await turnStep(currentStepInput);
+      result = {
+        ...result,
+        sessionState: await flushHostRuntimeReleases(result.sessionState),
+      };
 
       if (result.action !== "cancelled" && result.sleepDurationMs !== undefined) {
         await workflowSleep(result.sleepDurationMs);
       }
 
       if (result.action === "done") {
+        result = {
+          ...result,
+          serializedContext: await settleRootHostRuntime({
+            outcome: result.isError === true ? "failed" : "completed",
+            serializedContext: result.serializedContext,
+          }),
+        };
         await sendTurnControlStep({
           controlToken: input.completionToken,
           payload: {
@@ -482,6 +549,15 @@ async function runLegacyTurnWorkflow(input: TurnWorkflowInput): Promise<void> {
 
         if (!canPark) throw new Error(TASK_MODE_WAIT_ERROR_MESSAGE);
 
+        if (!result.hasPendingAuthorization || result.settled !== undefined) {
+          result = {
+            ...result,
+            serializedContext: await settleRootHostRuntime({
+              outcome: result.settled?.isError === true ? "failed" : "completed",
+              serializedContext: result.serializedContext,
+            }),
+          };
+        }
         const action: NextDriverAction =
           pendingActionKeys !== undefined
             ? {

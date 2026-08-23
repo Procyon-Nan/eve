@@ -4,6 +4,7 @@ import {
   sanitizeHostRuntimeProviderFailure,
 } from "#runtime/host-runtime/errors.js";
 import { validateHostRuntimeReference } from "#runtime/host-runtime/validation.js";
+import { releaseHostRuntimeReference } from "#runtime/host-runtime/release.js";
 import { getActiveRuntimeSession } from "#runtime/sessions/runtime-session.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import type { DurableHostRuntimeContext, HostRuntimeParentLineage } from "#shared/host-runtime.js";
@@ -76,6 +77,15 @@ export async function prepareLocalSubagentHostRuntime(input: {
 
   const reference = validateHostRuntimeReference(created);
   if (reference.providerKind !== input.config.runtime.providerKind) {
+    await releaseHostRuntimeReference(
+      {
+        outcome: "start_failed",
+        parent: lineage,
+        reference,
+        sessionId: input.parentSessionId,
+      },
+      provider,
+    );
     throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
   }
 

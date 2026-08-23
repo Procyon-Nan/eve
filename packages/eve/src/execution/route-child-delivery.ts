@@ -14,6 +14,7 @@ import {
   recordTerminalTaskViewsStep,
   recordTaskInputRequestStep,
 } from "#execution/tasks/parent/hitl-proxy-steps.js";
+import { flushHostRuntimeReleases } from "#execution/host-runtime-finalization.js";
 
 /**
  * Coalesces inbound deliver payloads and routes any descendant-bound input
@@ -40,6 +41,7 @@ export async function routeDeliverToChildren(input: {
       sessionState,
       views: payload.task?.views ?? [],
     });
+    sessionState = await flushHostRuntimeReleases(sessionState);
   }
 
   for (const request of payload.task?.inputRequests ?? []) {

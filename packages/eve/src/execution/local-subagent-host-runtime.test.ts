@@ -159,15 +159,29 @@ describe("local specialist host runtime", () => {
     });
 
     const invalid = createRuntimeSession("specialist-factory-invalid");
+    const release = vi.fn(async () => {});
     invalid.hostRuntimeProviders.set("baigong-agent", {
       createSpecialistReference: async () => ({ providerKind: "other-host", value: "child" }),
       providerKind: "baigong-agent",
+      release,
       resolve: vi.fn(),
     });
     await withRuntimeSession(invalid, async () => {
       await expect(prepare()).rejects.toEqual(
         expect.objectContaining({ code: "HOST_RUNTIME_REFERENCE_INVALID" }),
       );
+      expect(release).toHaveBeenCalledExactlyOnceWith({
+        outcome: "start_failed",
+        parent: {
+          callId: "call-1",
+          rootSessionId: "parent-1",
+          sessionId: "parent-1",
+          subagentName: "reviewer",
+          turnId: "turn-1",
+        },
+        reference: { providerKind: "other-host", value: "child" },
+        sessionId: "parent-1",
+      });
     });
 
     const transient = createRuntimeSession("specialist-factory-transient");

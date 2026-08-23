@@ -12,6 +12,8 @@ import {
 } from "#harness/handles/store.js";
 import type { HarnessSession, SessionStateMap } from "#harness/types.js";
 import type { AgentTurnOutcome } from "#shared/agent-turn-outcome.js";
+import type { HostRuntimeReleaseOutcome } from "#shared/host-runtime.js";
+import { enqueueHostRuntimeRelease } from "#harness/host-runtime-releases.js";
 
 /**
  * Records intent to start a fresh child. Must be applied to the step's
@@ -214,18 +216,27 @@ export function confirmTaskAgentAddress(
   );
 }
 
-/** Removes a task-mode address after permanent delivery failure. */
-export function removeTaskAgentAddress(session: HarnessSession, agentId: string): HarnessSession {
-  return { ...session, state: removeTaskAgentAddressFromState(session.state, agentId) };
+/** Settles and removes a task-mode address after its delegated call becomes terminal. */
+export function removeTaskAgentAddress(
+  session: HarnessSession,
+  agentId: string,
+  outcome: Exclude<HostRuntimeReleaseOutcome, "start_failed"> = "failed",
+): HarnessSession {
+  return { ...session, state: removeTaskAgentAddressFromState(session.state, agentId, outcome) };
 }
 
 /** State-only variant used while consuming a terminal task wake. */
 export function removeTaskAgentAddressFromState(
   state: SessionStateMap | undefined,
   agentId: string,
+  outcome: Exclude<HostRuntimeReleaseOutcome, "start_failed"> = "failed",
 ): SessionStateMap {
   const handles = getAgentHandleStore(state)?.handles ?? [];
-  return {
+  const existing = handles.find(
+    (handle): handle is Extract<AgentHandle, { phase: "addressed" }> =>
+      handle.phase === "addressed" && handle.identity.id === agentId,
+  );
+  let next: SessionStateMap = {
     ...state,
     [AGENT_HANDLES_STATE_KEY]: assertPersistableAgentHandleStore({
       handles: handles.filter(
@@ -233,6 +244,18 @@ export function removeTaskAgentAddressFromState(
       ),
     }),
   };
+  if (existing?.hostRuntime !== undefined) {
+    next = enqueueHostRuntimeRelease(
+      { state: next },
+      {
+        outcome,
+        parent: existing.hostRuntime.parent,
+        reference: existing.hostRuntime.reference,
+        sessionId: existing.address.sessionId,
+      },
+    ).state as SessionStateMap;
+  }
+  return next;
 }
 
 /**
@@ -282,8 +305,20 @@ export function rejectAgentEffect(
     }
   }
 
+  const rejectedSession =
+    existing.hostRuntime === undefined
+      ? session
+      : enqueueHostRuntimeRelease(session, {
+          outcome: existing.operation.kind === "start" ? "start_failed" : "failed",
+          parent: existing.hostRuntime.parent,
+          reference: existing.hostRuntime.reference,
+          sessionId:
+            existing.phase === "starting"
+              ? existing.hostRuntime.parent.sessionId
+              : existing.address.sessionId,
+        });
   return writeHandles(
-    session,
+    rejectedSession,
     handles.filter((handle) => handle !== existing),
   );
 }
@@ -307,22 +342,64 @@ export function abandonRunningAgentTurns(session: HarnessSession): HarnessSessio
   if (!handles.some((handle) => handle.phase === "running")) {
     return session;
   }
+  let nextSession = session;
+  for (const handle of handles) {
+    if (handle.phase !== "running" || handle.hostRuntime === undefined) continue;
+    nextSession = enqueueHostRuntimeRelease(nextSession, {
+      outcome: "cancelled",
+      parent: handle.hostRuntime.parent,
+      reference: handle.hostRuntime.reference,
+      sessionId: handle.address.sessionId,
+    });
+  }
   return writeHandles(
-    session,
-    handles.map((handle) =>
-      handle.phase === "running"
-        ? attachHostRuntime(
-            {
-              address: handle.address,
-              identity: handle.identity,
-              lastStatus: "(cancelled)",
-              phase: "parked",
-            },
-            handle.hostRuntime,
-          )
-        : handle,
+    nextSession,
+    handles.flatMap((handle) =>
+      handle.phase !== "running"
+        ? [handle]
+        : handle.hostRuntime !== undefined
+          ? []
+          : [
+              {
+                address: handle.address,
+                identity: handle.identity,
+                lastStatus: "(cancelled)",
+                phase: "parked" as const,
+              },
+            ],
     ),
   );
+}
+
+/** Cancels every specialist lifecycle still owned when its parent session terminates. */
+export function terminateHostRuntimeAgentHandles<
+  T extends { readonly state?: HarnessSession["state"] },
+>(session: T): T {
+  const handles = getAgentHandleStore(session.state)?.handles ?? [];
+  const owned = handles.filter((handle) => handle.hostRuntime !== undefined);
+  if (owned.length === 0) return session;
+
+  let nextSession = session;
+  for (const handle of owned) {
+    const hostRuntime = handle.hostRuntime;
+    if (hostRuntime === undefined) continue;
+    nextSession = enqueueHostRuntimeRelease(nextSession, {
+      outcome: "cancelled",
+      parent: hostRuntime.parent,
+      reference: hostRuntime.reference,
+      sessionId:
+        handle.phase === "starting" ? hostRuntime.parent.sessionId : handle.address.sessionId,
+    });
+  }
+  return {
+    ...nextSession,
+    state: {
+      ...nextSession.state,
+      [AGENT_HANDLES_STATE_KEY]: assertPersistableAgentHandleStore({
+        handles: handles.filter((handle) => handle.hostRuntime === undefined),
+      }),
+    },
+  } as T;
 }
 
 /** Result of applying a settled child turn to the store. */
@@ -354,10 +431,25 @@ export function settleAgentTurn(
   }
 
   if (input.outcome.kind === "terminal") {
+    const result = input.outcome.result;
+    const settledSession =
+      existing.hostRuntime === undefined
+        ? session
+        : enqueueHostRuntimeRelease(session, {
+            outcome:
+              result.kind === "succeeded"
+                ? "completed"
+                : result.kind === "cancelled"
+                  ? "cancelled"
+                  : "failed",
+            parent: existing.hostRuntime.parent,
+            reference: existing.hostRuntime.reference,
+            sessionId: existing.address.sessionId,
+          });
     return {
       kind: "settled",
       session: writeHandles(
-        session,
+        settledSession,
         handles.filter((handle) => handle !== existing),
       ),
     };

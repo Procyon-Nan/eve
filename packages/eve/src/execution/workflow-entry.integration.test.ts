@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MockLanguageModelV3 } from "ai/test";
 import { getWorld, resumeHook, start } from "#internal/workflow/runtime.js";
 import { hydrateWorkflowArguments } from "@workflow/core/serialization";
 
@@ -16,6 +17,7 @@ import { createToolExecuteWithAuth } from "#execution/tool-auth.js";
 import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import { beginHostRuntimeAcceptance } from "#runtime/host-runtime/acceptance.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
 import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
@@ -1241,6 +1243,107 @@ describe("workflowEntry integration", () => {
         )) as readonly [{ readonly hostRuntime?: unknown }];
         expect(input.hostRuntime).toEqual(hostRuntime);
       } finally {
+        await run.cancel();
+      }
+    });
+  });
+
+  it("releases a completed root host-runtime turn after its waiting boundary commits", async () => {
+    const runtime = createTestRuntime({ agent: { name: "workflow-entry-host-runtime-release" } });
+    const releaseInputs: unknown[] = [];
+    runtime.session.hostRuntimeProviders.set("baigong-agent", {
+      providerKind: "baigong-agent",
+      async release(input) {
+        releaseInputs.push(input);
+      },
+      async resolve() {
+        return {
+          model: new MockLanguageModelV3({ modelId: "host-model", provider: "host" }),
+          modelId: "host-model",
+        };
+      },
+    });
+    const hostRuntime = {
+      acceptanceKey: "integration-release-completed",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-completed" },
+    };
+
+    await runtime.run(async () => {
+      await beginHostRuntimeAcceptance(hostRuntime.acceptanceKey);
+      const run = await start(workflowEntry, [
+        {
+          hostRuntime,
+          input: { message: "complete this host-runtime turn" },
+          serializedContext: buildSerializedContext({ channelKind: "http", mode: "conversation" }),
+        },
+      ]);
+      const stream = captureTurnEvents(run);
+
+      try {
+        await stream.nextTurn();
+        await expect
+          .poll(() => releaseInputs)
+          .toEqual([
+            {
+              outcome: "completed",
+              reference: hostRuntime.reference,
+              sessionId: run.runId,
+            },
+          ]);
+      } finally {
+        stream.dispose();
+        await run.cancel();
+      }
+    });
+  });
+
+  it("releases a deterministic root preflight failure and keeps the session waiting", async () => {
+    const runtime = createTestRuntime({ agent: { name: "workflow-entry-host-runtime-failure" } });
+    const releaseInputs: unknown[] = [];
+    runtime.session.hostRuntimeProviders.set("baigong-agent", {
+      providerKind: "baigong-agent",
+      async release(input) {
+        releaseInputs.push(input);
+      },
+      async resolve() {
+        throw new HostRuntimeError("HOST_RUNTIME_VERSION_UNAVAILABLE");
+      },
+    });
+    const hostRuntime = {
+      acceptanceKey: "integration-release-failed",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-failed" },
+    };
+
+    await runtime.run(async () => {
+      await beginHostRuntimeAcceptance(hostRuntime.acceptanceKey);
+      const run = await start(workflowEntry, [
+        {
+          hostRuntime,
+          input: { message: "fail this host-runtime preflight" },
+          serializedContext: buildSerializedContext({ channelKind: "http", mode: "conversation" }),
+        },
+      ]);
+      const stream = captureTurnEvents(run);
+
+      try {
+        const events = await stream.nextTurn();
+        expect(events.at(-1)?.type).toBe("session.waiting");
+        expect(filterEventsByType(events, "step.failed")[0]?.data).toMatchObject({
+          code: "HOST_RUNTIME_VERSION_UNAVAILABLE",
+        });
+        await expect
+          .poll(() => releaseInputs)
+          .toEqual([
+            {
+              outcome: "failed",
+              reference: hostRuntime.reference,
+              sessionId: run.runId,
+            },
+          ]);
+      } finally {
+        stream.dispose();
         await run.cancel();
       }
     });

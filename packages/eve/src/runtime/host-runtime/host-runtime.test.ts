@@ -227,6 +227,27 @@ describe("host runtime preflight", () => {
     });
   });
 
+  it("rejects a released reference before provider resolution", async () => {
+    const session = createRuntimeSession("preflight-released-reference");
+    const resolve = vi.fn(async () => ({ model: createModel(), modelId: "host-model" }));
+
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({ providerKind: reference.providerKind, resolve });
+      const ctx = createContext();
+      ctx.set(HostRuntimeContextKey, {
+        acceptanceKey: "command-1",
+        ownership: "root",
+        reference,
+        releasedOutcome: "completed",
+      });
+
+      await expect(prepareHostRuntimePreflight(ctx)).rejects.toMatchObject({
+        code: "HOST_RUNTIME_REFERENCE_INVALID",
+      });
+      expect(resolve).not.toHaveBeenCalled();
+    });
+  });
+
   it("limits delegated specialist authorization to a strictly valid root owner", () => {
     const root = createContext();
     root.setVirtualContext(HostRuntimePreflightKey, {

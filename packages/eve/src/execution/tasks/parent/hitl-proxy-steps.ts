@@ -170,8 +170,20 @@ export async function recordTerminalTaskViewsStep(input: {
   let state = durableSession.state;
   for (const view of input.views) {
     state = cacheTerminalTaskView(state, view);
-    if (view.executor?.lifecycle === "terminal") {
-      state = removeTaskAgentAddressFromState(state, view.metadata.agentId);
+    const handle = (getAgentHandleStore(state)?.handles ?? []).find(
+      (candidate) =>
+        candidate.phase === "addressed" && candidate.identity.id === view.metadata.agentId,
+    );
+    if (view.executor?.lifecycle === "terminal" || handle?.hostRuntime !== undefined) {
+      state = removeTaskAgentAddressFromState(
+        state,
+        view.metadata.agentId,
+        view.status === "completed"
+          ? "completed"
+          : view.status === "cancelled"
+            ? "cancelled"
+            : "failed",
+      );
     }
   }
   if (state === durableSession.state) return input.sessionState;

@@ -21,6 +21,7 @@ import {
   settleAgentTurn,
 } from "#harness/handles/transitions.js";
 import type { HarnessSession } from "#harness/types.js";
+import { readPendingHostRuntimeReleases } from "#harness/host-runtime-releases.js";
 import type { TokenUsage } from "#shared/token-usage.js";
 
 const ZERO_USAGE: TokenUsage = {
@@ -191,6 +192,25 @@ describe("task agent addresses", () => {
 
     expect(handlesOf(removeTaskAgentAddress(addressed, identity.id))).toEqual([]);
   });
+
+  it("settles specialist ownership with the task terminal outcome", () => {
+    const prepared = prepareAgentStart(createSession(), {
+      hostRuntime,
+      identity,
+      operation: startOperation,
+      target: { continuationToken: "continuation_child", kind: "agent/local" },
+    });
+    const addressed = confirmTaskAgentAddress(prepared, {
+      address,
+      operationId: startOperation.id,
+    });
+    const settled = removeTaskAgentAddress(addressed, identity.id, "cancelled");
+
+    expect(handlesOf(settled)).toEqual([]);
+    expect(readPendingHostRuntimeReleases(settled)).toEqual([
+      { outcome: "cancelled", ...hostRuntime, sessionId: address.sessionId },
+    ]);
+  });
 });
 
 describe("prepareAgentContinuation", () => {
@@ -279,6 +299,24 @@ describe("rejectAgentEffect", () => {
     expect(handlesOf(session)).toEqual([]);
   });
 
+  it("records specialist start failure before deleting its prepared handle", () => {
+    const prepared = prepareAgentStart(createSession(), {
+      hostRuntime,
+      identity,
+      operation: startOperation,
+      target: { continuationToken: "continuation_child", kind: "agent/local" },
+    });
+    const rejected = rejectAgentEffect(prepared, {
+      disposition: "dead",
+      operationId: startOperation.id,
+    });
+
+    expect(handlesOf(rejected)).toEqual([]);
+    expect(readPendingHostRuntimeReleases(rejected)).toEqual([
+      { outcome: "start_failed", ...hostRuntime, sessionId: "session_parent" },
+    ]);
+  });
+
   it("restores parked with the previous status for a retryable continuation", () => {
     const continueOperation: ContinueOperation = {
       callId: "call_2",
@@ -336,6 +374,22 @@ describe("abandonRunningAgentTurns", () => {
     const empty = createSession();
     expect(abandonRunningAgentTurns(empty)).toBe(empty);
   });
+
+  it("terminally cancels a running specialist instead of leaving a resumable handle", () => {
+    const prepared = prepareAgentStart(createSession(), {
+      hostRuntime,
+      identity,
+      operation: startOperation,
+      target: { continuationToken: "continuation_child", kind: "agent/local" },
+    });
+    const running = confirmAgentStarted(prepared, { address, operationId: startOperation.id });
+    const abandoned = abandonRunningAgentTurns(running);
+
+    expect(handlesOf(abandoned)).toEqual([]);
+    expect(readPendingHostRuntimeReleases(abandoned)).toEqual([
+      { outcome: "cancelled", ...hostRuntime, sessionId: address.sessionId },
+    ]);
+  });
 });
 
 describe("settleAgentTurn", () => {
@@ -372,6 +426,32 @@ describe("settleAgentTurn", () => {
     expect(settled.kind).toBe("settled");
     if (settled.kind === "settled") {
       expect(handlesOf(settled.session)).toEqual([]);
+    }
+  });
+
+  it("records a specialist terminal result before deleting its handle", () => {
+    const prepared = prepareAgentStart(createSession(), {
+      hostRuntime,
+      identity,
+      operation: startOperation,
+      target: { continuationToken: "continuation_child", kind: "agent/local" },
+    });
+    const running = confirmAgentStarted(prepared, { address, operationId: startOperation.id });
+    const settled = settleAgentTurn(running, {
+      operationId: startOperation.id,
+      outcome: {
+        kind: "terminal",
+        result: { kind: "succeeded", output: "done" },
+        usageDelta: ZERO_USAGE,
+      },
+    });
+
+    expect(settled.kind).toBe("settled");
+    if (settled.kind === "settled") {
+      expect(handlesOf(settled.session)).toEqual([]);
+      expect(readPendingHostRuntimeReleases(settled.session)).toEqual([
+        { outcome: "completed", ...hostRuntime, sessionId: address.sessionId },
+      ]);
     }
   });
 
