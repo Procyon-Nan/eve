@@ -238,6 +238,15 @@ describe("workflowEntry", () => {
       serializedContext: createSerializedContext(),
     });
 
+    expect(createSessionStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostRuntime: {
+          acceptanceKey: "create-acceptance",
+          ownership: "root",
+          reference: { providerKind: "baigong-agent", value: "opaque-reference" },
+        },
+      }),
+    );
     expect(recordHostRuntimeAcceptanceStep).toHaveBeenCalledExactlyOnceWith("create-acceptance");
     expect(getConflict.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(recordHostRuntimeAcceptanceStep).mock.invocationCallOrder[0] ??

@@ -68,6 +68,17 @@ const address: AgentAddress = {
   sessionId: "session_child",
 };
 
+const hostRuntime = {
+  parent: {
+    callId: "call_1",
+    rootSessionId: "session_parent",
+    sessionId: "session_parent",
+    subagentName: "research",
+    turnId: "turn_1",
+  },
+  reference: { providerKind: "baigong-agent", value: "opaque-specialist" },
+} as const;
+
 function preparedSession(): HarnessSession {
   return prepareAgentStart(createSession(), {
     identity,
@@ -113,6 +124,23 @@ describe("prepareAgentStart", () => {
         target: { continuationToken: "continuation_child", kind: "agent/local" },
       },
     ]);
+  });
+
+  it("keeps specialist ownership through running and task-addressed confirmation", () => {
+    const prepared = prepareAgentStart(createSession(), {
+      hostRuntime,
+      identity,
+      operation: startOperation,
+      target: { continuationToken: "continuation_child", kind: "agent/local" },
+    });
+    const running = confirmAgentStarted(prepared, { address, operationId: startOperation.id });
+    const addressed = confirmTaskAgentAddress(prepared, {
+      address,
+      operationId: startOperation.id,
+    });
+
+    expect(handlesOf(running)[0]).toMatchObject({ hostRuntime, phase: "running" });
+    expect(handlesOf(addressed)[0]).toMatchObject({ hostRuntime, phase: "addressed" });
   });
 
   it("throws when the identity already exists", () => {

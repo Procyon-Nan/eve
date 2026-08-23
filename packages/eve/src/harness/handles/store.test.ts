@@ -49,6 +49,17 @@ const addressedHandle: AgentHandle = {
   phase: "addressed",
 };
 
+const hostRuntime = {
+  parent: {
+    callId: "call_1",
+    rootSessionId: "session_parent",
+    sessionId: "session_parent",
+    subagentName: "research",
+    turnId: "turn_1",
+  },
+  reference: { providerKind: "baigong-agent", value: "opaque-specialist" },
+} as const;
+
 describe("deriveAgentOperationId / deriveAgentId", () => {
   it("is deterministic on parent-controlled inputs and independent of the child session", () => {
     const again = deriveAgentOperationId({
@@ -114,6 +125,24 @@ describe("assertPersistableAgentHandleStore", () => {
     expect(assertPersistableAgentHandleStore({ handles: [addressedHandle] })).toEqual({
       handles: [addressedHandle],
     });
+  });
+
+  it("validates specialist ownership on task-addressed handles", () => {
+    expect(
+      assertPersistableAgentHandleStore({
+        handles: [{ ...addressedHandle, hostRuntime }],
+      }),
+    ).toEqual({ handles: [{ ...addressedHandle, hostRuntime }] });
+    expect(() =>
+      assertPersistableAgentHandleStore({
+        handles: [
+          {
+            ...addressedHandle,
+            hostRuntime: { ...hostRuntime, reference: { ...hostRuntime.reference, value: "" } },
+          },
+        ],
+      }),
+    ).toThrow("Refusing to persist");
   });
 
   it("refuses to persist a malformed store", () => {

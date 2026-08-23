@@ -210,7 +210,7 @@ the same commit as its code.
       types.
 - [x] Phase 2: Add trusted root-turn ingress, atomic durable acceptance, and the status probe.
 - [x] Phase 3: Add unified preflight, model/instruction/tool composition, and model-call timeout.
-- [ ] Phase 4: Add top-level specialist authorization, factory creation, durable lineage, and
+- [x] Phase 4: Add top-level specialist authorization, factory creation, durable lineage, and
       replay-safe dispatch for plain, task, and Workflow calls.
 - [ ] Phase 5: Add root and specialist terminal release across completed, failed, cancelled, and
       start-failed paths.

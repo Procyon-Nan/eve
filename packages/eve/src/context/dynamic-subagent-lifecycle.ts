@@ -7,6 +7,7 @@ import {
   SessionDynamicSubagentRuntimeRevisionKey,
   SessionDynamicSubagentSelectionsKey,
   TurnDynamicSubagentSelectionsKey,
+  HostRuntimeContextKey,
   type DurableDynamicSubagentSelection,
 } from "#context/keys.js";
 import { createHarnessDelegationToolDefinition } from "#execution/delegation-tool.js";
@@ -21,7 +22,11 @@ import {
 import { normalizeDynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import { normalizeDynamicRemoteAgentConfig } from "#runtime/subagents/dynamic-remote-agent-config.js";
 import { toErrorMessage } from "#shared/errors.js";
-import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { HostRuntimeError, isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import {
+  getEffectiveDelegatedSubagentNames,
+  isTopLevelHostRuntimeRoot,
+} from "#runtime/host-runtime/preflight.js";
 
 const log = createLogger("dynamic-subagents");
 const ALLOWED_DYNAMIC_SUBAGENT_EVENTS = new Set(["session.started", "turn.started"]);
@@ -36,8 +41,23 @@ async function resolveSelections(input: {
   readonly resolvers: readonly ResolvedDynamicSubagentResolver[];
 }): Promise<DynamicSubagentSelections> {
   const inputSchema = getSubagentToolInputJsonSchema(input.persistentSessions);
+  const hostRuntime = input.ctx.get(HostRuntimeContextKey);
+  const hasHostRuntimeResolver = input.resolvers.some((resolver) => resolver.runtime !== undefined);
+  const topLevelRoot = hasHostRuntimeResolver && isTopLevelHostRuntimeRoot(input.ctx);
+  const authorizedNames = hasHostRuntimeResolver
+    ? getEffectiveDelegatedSubagentNames(input.ctx)
+    : new Set<string>();
   const outcomes = await Promise.allSettled(
     input.resolvers.map(async (resolver) => {
+      if (
+        resolver.runtime !== undefined &&
+        (input.event.type !== "turn.started" ||
+          !topLevelRoot ||
+          !authorizedNames.has(resolver.name) ||
+          resolver.runtime.providerKind !== hostRuntime?.reference.providerKind)
+      ) {
+        return [resolver.nodeId, null] as const;
+      }
       const handler = resolver.events[input.event.type];
       if (handler === undefined) {
         return [resolver.nodeId, null] as const;
@@ -48,6 +68,9 @@ async function resolveSelections(input: {
         return [resolver.nodeId, null] as const;
       }
       if (isRemoteAgentDefinition(result)) {
+        if (resolver.runtime !== undefined) {
+          throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+        }
         const remoteAgent = await normalizeDynamicRemoteAgentConfig({
           name: resolver.name,
           value: result,
@@ -77,6 +100,14 @@ async function resolveSelections(input: {
         value: result,
       });
       const resolvedAgentConfig = await agentConfig;
+      if (
+        (resolver.runtime !== undefined || resolvedAgentConfig.runtime !== undefined) &&
+        (resolver.runtime === undefined ||
+          resolvedAgentConfig.runtime === undefined ||
+          resolvedAgentConfig.runtime.providerKind !== resolver.runtime.providerKind)
+      ) {
+        throw new HostRuntimeError("HOST_RUNTIME_REFERENCE_INVALID");
+      }
       const prepared = createPreparedRuntimeSubagentTool(
         {
           description: resolvedAgentConfig.description,

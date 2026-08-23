@@ -173,6 +173,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
       continuationToken,
       dynamicSubagentAgentConfig,
       inheritedLimits: input.limits,
+      hostRuntime: input.hostRuntime,
       nodeId: serializedBundle.nodeId,
       outputSchema: input.input.outputSchema,
       rootSessionId: rootSessionIdFromParent,

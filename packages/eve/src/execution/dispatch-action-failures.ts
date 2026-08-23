@@ -5,6 +5,7 @@ import type {
   RuntimeSubagentDispatchFailure,
 } from "#runtime/actions/types.js";
 import { toErrorMessage } from "#shared/errors.js";
+import type { HostRuntimeErrorCode } from "#runtime/host-runtime/errors.js";
 
 export function createUnavailableDynamicSubagentResult(
   action: RuntimeSubagentCallActionRequest | RuntimeRemoteAgentCallActionRequest,
@@ -20,6 +21,20 @@ export function createUnavailableDynamicSubagentResult(
       message: `Subagent "${subagentName}" is not available in the current session context.`,
     },
     subagentName,
+  };
+}
+
+export function createHostRuntimeSubagentFailure(
+  action: RuntimeSubagentCallActionRequest,
+  code: HostRuntimeErrorCode,
+): RuntimeSubagentDispatchFailure {
+  return {
+    callId: action.callId,
+    isError: true,
+    kind: "subagent-result",
+    origin: "dispatch",
+    output: { code, message: code },
+    subagentName: action.subagentName,
   };
 }
 

@@ -19,6 +19,7 @@ import type {
 import { mintSubagentContinuationToken } from "#execution/session.js";
 import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { resolveRemainingSessionTokenLimits } from "#harness/subagent-token-budget.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 /**
  * Pending runtime-action batch event metadata needed for child run lineage.
@@ -100,6 +101,7 @@ export function buildSubagentRunInput(input: {
    */
   readonly fanoutSize?: number;
   readonly initiatorAuth: SessionAuthContext | null;
+  readonly hostRuntime?: DurableHostRuntimeContext;
   /** Exact message already validated before the dispatch batch starts. */
   readonly delegationMessage?: string;
   /**
@@ -159,6 +161,12 @@ export function buildSubagentRunInput(input: {
     parentSessionId: session.sessionId,
     subagentName: action.subagentName,
   };
+  if (input.hostRuntime?.ownership === "specialist" && input.hostRuntime.parent !== undefined) {
+    adapterState.hostRuntime = {
+      parent: input.hostRuntime.parent,
+      reference: input.hostRuntime.reference,
+    };
+  }
   const targetSandbox = input.graph?.nodesByNodeId.get(action.nodeId)?.sandboxRegistry.sandbox;
   const sharesSandbox =
     targetSandbox?.definition.inheritsParent === true ||
@@ -205,6 +213,7 @@ export function buildSubagentRunInput(input: {
     parentTraceContext: input.parentTraceContext,
     subagentDepth: subagentDepth.nextChildDepth,
   };
+  if (input.hostRuntime !== undefined) runInput.hostRuntime = input.hostRuntime;
 
   return { childContinuationToken, runInput };
 }

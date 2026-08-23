@@ -155,6 +155,8 @@ export async function dispatchTaskStep(
             currentSession: nextSession,
             fanoutSize: prepared.fanoutSize,
             initiatorAuth: prepared.initiatorAuth,
+            authorizedSpecialistNames: prepared.authorizedSpecialistNames,
+            parentHostRuntime: prepared.parentHostRuntime,
             parentContinuationToken: delegated.taskInboxToken,
             parentTraceContext: prepared.parentTraceContext,
             // Background tasks require resumable children, so task mode

@@ -7,8 +7,16 @@ import {
   getDynamicSubagentSelection,
   refreshDynamicSessionSubagentsForRuntimeRevision,
 } from "#context/dynamic-subagent-lifecycle.js";
-import { SessionDynamicSubagentRuntimeRevisionKey, SessionIdKey } from "#context/keys.js";
-import { defineAgent } from "#public/definitions/agent.js";
+import {
+  HostRuntimeContextKey,
+  HostRuntimePreflightKey,
+  ParentSessionKey,
+  SessionDynamicSubagentRuntimeRevisionKey,
+  SessionIdKey,
+  SubagentDepthKey,
+  TurnDynamicSubagentSelectionsKey,
+} from "#context/keys.js";
+import { defineAgent, defineHostRuntime } from "#public/definitions/agent.js";
 import { defineRemoteAgent } from "#public/definitions/remote-agent.js";
 import { createSessionStartedEvent, createTurnStartedEvent } from "#protocol/message.js";
 import type { ResolvedDynamicSubagentResolver } from "#runtime/subagents/registry.js";
@@ -32,6 +40,106 @@ describe("dynamic subagent lifecycle", () => {
         resolvers: [resolver],
       }),
     ).rejects.toBe(failure);
+  });
+
+  it("runs an authorized host specialist only for its true top-level root", async () => {
+    const handler = vi.fn(() =>
+      defineAgent({
+        description: "Review delegated work.",
+        runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+      }),
+    );
+    const resolver = createHostResolver(handler);
+    const ctx = createHostContext(["reviewer"]);
+
+    await dispatchDynamicSubagentEvent({
+      ctx,
+      event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
+      messages: [],
+      persistentSessions: false,
+      resolvers: [resolver],
+    });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(getDynamicSubagentSelection(ctx, resolver.nodeId)).toMatchObject({
+      agentConfig: { runtime: { providerKind: "baigong-agent" } },
+      kind: "subagent",
+    });
+  });
+
+  it("rejects a host resolver that returns a different runtime kind", async () => {
+    const resolver = createHostResolver(() =>
+      defineRemoteAgent({ description: "Remote", url: "https://example.com" }),
+    );
+
+    await expect(
+      dispatchDynamicSubagentEvent({
+        ctx: createHostContext(["reviewer"]),
+        event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
+        messages: [],
+        persistentSessions: false,
+        resolvers: [resolver],
+      }),
+    ).rejects.toEqual(expect.objectContaining({ code: "HOST_RUNTIME_REFERENCE_INVALID" }));
+  });
+
+  it.each([
+    ["missing authorization", (ctx: ContextContainer) => ctx],
+    [
+      "nested parent",
+      (ctx: ContextContainer) => {
+        ctx.set(ParentSessionKey, {
+          callId: "parent-call",
+          rootSessionId: "root-1",
+          sessionId: "parent-1",
+          turn: { id: "parent-turn", sequence: 0 },
+        });
+        return ctx;
+      },
+    ],
+    [
+      "nested depth",
+      (ctx: ContextContainer) => {
+        ctx.set(SubagentDepthKey, 1);
+        return ctx;
+      },
+    ],
+    [
+      "inherited ownership",
+      (ctx: ContextContainer) => {
+        ctx.set(HostRuntimeContextKey, {
+          ownership: "inherited",
+          reference: { providerKind: "baigong-agent", value: "root-reference" },
+        });
+        return ctx;
+      },
+    ],
+    [
+      "provider mismatch",
+      (ctx: ContextContainer) => {
+        ctx.set(HostRuntimeContextKey, {
+          acceptanceKey: "command-1",
+          ownership: "root",
+          reference: { providerKind: "other-host", value: "root-reference" },
+        });
+        return ctx;
+      },
+    ],
+  ])("persists null without running an unauthorized host resolver: %s", async (_name, alter) => {
+    const handler = vi.fn();
+    const resolver = createHostResolver(handler);
+    const ctx = alter(createHostContext(_name === "missing authorization" ? [] : ["reviewer"]));
+
+    await dispatchDynamicSubagentEvent({
+      ctx,
+      event: createTurnStartedEvent({ sequence: 0, turnId: "turn-1" }),
+      messages: [],
+      persistentSessions: false,
+      resolvers: [resolver],
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(ctx.get(TurnDynamicSubagentSelectionsKey)).toEqual({ [resolver.nodeId]: null });
   });
 
   it("omits a subagent when its resolver returns null", async () => {
@@ -286,6 +394,35 @@ function createContext(): ContextContainer {
   const ctx = new ContextContainer();
   ctx.set(SessionIdKey, "session-1");
   return ctx;
+}
+
+function createHostContext(delegatedSubagentNames: readonly string[]): ContextContainer {
+  const ctx = createContext();
+  ctx.set(HostRuntimeContextKey, {
+    acceptanceKey: "command-1",
+    ownership: "root",
+    reference: { providerKind: "baigong-agent", value: "root-reference" },
+  });
+  ctx.setVirtualContext(HostRuntimePreflightKey, {
+    delegatedSubagentNames,
+    model: { specificationVersion: "v3" } as never,
+    modelId: "host-model",
+  });
+  return ctx;
+}
+
+function createHostResolver(handler: () => unknown): ResolvedDynamicSubagentResolver {
+  return {
+    eventNames: ["turn.started"],
+    events: { "turn.started": handler },
+    kind: "subagent",
+    logicalPath: "agent/subagents/reviewer/agent.ts",
+    name: "reviewer",
+    nodeId: "subagents/reviewer",
+    runtime: defineHostRuntime({ providerKind: "baigong-agent" }),
+    sourceId: "agent/subagents/reviewer/agent.ts",
+    sourceKind: "module",
+  };
 }
 
 function createResolver(

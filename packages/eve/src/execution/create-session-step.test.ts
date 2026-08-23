@@ -222,4 +222,38 @@ describe("createSessionStep", () => {
 
     expect(state.snapshot?.session.workflowMaxSubagents).toBe(5);
   });
+
+  it("creates the initial specialist snapshot from matching durable runtime ownership", async () => {
+    vi.mocked(getCompiledRuntimeAgentBundle).mockResolvedValue({
+      resolvedAgent: { config: {} },
+      turnAgent: { ...TestTurnAgent, configResolver: true },
+    } as never);
+    const parent = {
+      callId: "call-1",
+      rootSessionId: "root-1",
+      sessionId: "parent-1",
+      subagentName: "reviewer",
+      turnId: "turn-1",
+    } as const;
+    const reference = { providerKind: "baigong-agent", value: "specialist-1" } as const;
+
+    const { state } = await createSessionStep({
+      compiledArtifactsSource: { kind: "bundled" },
+      continuationToken: "subagent:test",
+      dynamicSubagentAgentConfig: {
+        description: "Review delegated work.",
+        runtime: {
+          kind: "eve.host-runtime",
+          parent,
+          providerKind: "baigong-agent",
+          reference,
+        },
+      },
+      hostRuntime: { ownership: "specialist", parent, reference },
+      sessionId: "sess-specialist",
+      subagentDepth: 1,
+    });
+
+    expect(state.snapshot?.session.sessionId).toBe("sess-specialist");
+  });
 });

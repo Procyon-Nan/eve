@@ -15,6 +15,7 @@ import { resolveEffectiveAgentRuntimeFromConfig } from "#execution/effective-age
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
 import { TASK_UPDATE_SESSION_INSTRUCTION } from "#execution/tasks/child/instructions.js";
 import { isTaskToolAvailable, TASK_UPDATE_TOOL_NAME } from "#runtime/framework-tools/tasks.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 /**
  * Result returned by {@link createSessionStep}.
@@ -37,6 +38,7 @@ export async function createSessionStep(input: {
   readonly continuationToken: string;
   readonly dynamicSubagentAgentConfig?: DynamicSubagentAgentConfig;
   readonly inheritedLimits?: RunSessionLimits;
+  readonly hostRuntime?: DurableHostRuntimeContext;
   readonly outputSchema?: JsonObject;
   readonly nodeId?: string;
   readonly rootSessionId?: string;
@@ -53,6 +55,7 @@ export async function createSessionStep(input: {
   const effectiveAgent = resolveEffectiveAgentRuntimeFromConfig(
     bundle,
     input.dynamicSubagentAgentConfig,
+    { durable: input.hostRuntime },
   );
   const taskUpdatesEnabled =
     input.taskOwned === true &&

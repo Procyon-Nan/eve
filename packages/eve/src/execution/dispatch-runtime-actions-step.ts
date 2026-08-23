@@ -90,6 +90,8 @@ export async function dispatchRuntimeActionsStep(
             currentSession: nextSession,
             fanoutSize: prepared.fanoutSize,
             initiatorAuth: prepared.initiatorAuth,
+            authorizedSpecialistNames: prepared.authorizedSpecialistNames,
+            parentHostRuntime: prepared.parentHostRuntime,
             parentContinuationToken: input.parentContinuationToken,
             parentTraceContext: prepared.parentTraceContext,
             persistentSessions,

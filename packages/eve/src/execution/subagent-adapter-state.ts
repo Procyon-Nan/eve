@@ -3,6 +3,11 @@
  * harness code can identify a delegated child run without reaching the
  * adapter's workflow-coupled behavior (`runtime-boundary.test.ts`).
  */
+import type { HostRuntimeParentLineage, HostRuntimeReference } from "#shared/host-runtime.js";
+import {
+  validateHostRuntimeParentLineage,
+  validateHostRuntimeReference,
+} from "#runtime/host-runtime/validation.js";
 
 /**
  * Durable adapter kind used for delegated subagent child runs.
@@ -30,6 +35,10 @@ export interface SubagentAdapterState extends Record<string, unknown> {
   readonly parentContinuationToken: string;
   readonly parentSessionId: string;
   readonly subagentName: string;
+  readonly hostRuntime?: {
+    readonly parent: HostRuntimeParentLineage;
+    readonly reference: HostRuntimeReference;
+  };
 }
 
 /**
@@ -54,6 +63,27 @@ export function isSubagentAdapterState(value: unknown): value is SubagentAdapter
     typeof state.parentSessionId === "string" &&
     state.parentSessionId.length > 0 &&
     typeof state.subagentName === "string" &&
-    state.subagentName.length > 0
+    state.subagentName.length > 0 &&
+    isHostRuntimeState(state.hostRuntime)
   );
+}
+
+function isHostRuntimeState(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 2 ||
+    !Object.hasOwn(record, "parent") ||
+    !Object.hasOwn(record, "reference")
+  ) {
+    return false;
+  }
+  try {
+    validateHostRuntimeParentLineage(record.parent);
+    validateHostRuntimeReference(record.reference);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -5,6 +5,7 @@ import {
   getAgentHandleStore,
   type AgentAddress,
   type AgentHandle,
+  type AgentHandleHostRuntime,
   type AgentIdentity,
   type ContinueOperation,
   type StartOperation,
@@ -31,6 +32,7 @@ export function prepareAgentStart(
     readonly identity: AgentIdentity;
     readonly operation: StartOperation;
     readonly target: AgentStartTargetInput;
+    readonly hostRuntime?: AgentHandleHostRuntime;
   },
 ): HarnessSession {
   const handles = getAgentHandleStore(session.state)?.handles ?? [];
@@ -39,12 +41,15 @@ export function prepareAgentStart(
   }
   return writeHandles(session, [
     ...handles,
-    {
-      identity: input.identity,
-      operation: input.operation,
-      phase: "starting",
-      target: input.target,
-    },
+    attachHostRuntime(
+      {
+        identity: input.identity,
+        operation: input.operation,
+        phase: "starting",
+        target: input.target,
+      },
+      input.hostRuntime,
+    ),
   ]);
 }
 
@@ -100,12 +105,15 @@ export function prepareAgentContinuation(
     return { kind: "busy" };
   }
 
-  const running: Extract<AgentHandle, { phase: "running" }> = {
-    address: existing.address,
-    identity: existing.identity,
-    operation: { ...input.operation, previousStatus: existing.lastStatus },
-    phase: "running",
-  };
+  const running: Extract<AgentHandle, { phase: "running" }> = attachHostRuntime(
+    {
+      address: existing.address,
+      identity: existing.identity,
+      operation: { ...input.operation, previousStatus: existing.lastStatus },
+      phase: "running",
+    },
+    existing.hostRuntime,
+  );
   return {
     handle: running,
     kind: "ready",
@@ -156,12 +164,15 @@ export function confirmAgentStarted(
     session,
     handles.map((handle) =>
       handle === existing
-        ? {
-            address: input.address,
-            identity: existing.identity,
-            operation: existing.operation,
-            phase: "running",
-          }
+        ? attachHostRuntime(
+            {
+              address: input.address,
+              identity: existing.identity,
+              operation: existing.operation,
+              phase: "running",
+            },
+            existing.hostRuntime,
+          )
         : handle,
     ),
   );
@@ -190,11 +201,14 @@ export function confirmTaskAgentAddress(
     session,
     handles.map((handle) =>
       handle === existing
-        ? {
-            address: input.address,
-            identity: existing.identity,
-            phase: "addressed" as const,
-          }
+        ? attachHostRuntime(
+            {
+              address: input.address,
+              identity: existing.identity,
+              phase: "addressed" as const,
+            },
+            existing.hostRuntime,
+          )
         : handle,
     ),
   );
@@ -253,12 +267,15 @@ export function rejectAgentEffect(
         session,
         handles.map((handle) =>
           handle === existing
-            ? {
-                address: existing.address,
-                identity: existing.identity,
-                lastStatus: operation.previousStatus,
-                phase: "parked",
-              }
+            ? attachHostRuntime(
+                {
+                  address: existing.address,
+                  identity: existing.identity,
+                  lastStatus: operation.previousStatus,
+                  phase: "parked",
+                },
+                existing.hostRuntime,
+              )
             : handle,
         ),
       );
@@ -294,12 +311,15 @@ export function abandonRunningAgentTurns(session: HarnessSession): HarnessSessio
     session,
     handles.map((handle) =>
       handle.phase === "running"
-        ? {
-            address: handle.address,
-            identity: handle.identity,
-            lastStatus: "(cancelled)",
-            phase: "parked",
-          }
+        ? attachHostRuntime(
+            {
+              address: handle.address,
+              identity: handle.identity,
+              lastStatus: "(cancelled)",
+              phase: "parked",
+            },
+            handle.hostRuntime,
+          )
         : handle,
     ),
   );
@@ -356,12 +376,15 @@ export function settleAgentTurn(
       session,
       handles.map((handle) =>
         handle === existing
-          ? {
-              address: existing.address,
-              identity: existing.identity,
-              lastStatus,
-              phase: "parked",
-            }
+          ? attachHostRuntime(
+              {
+                address: existing.address,
+                identity: existing.identity,
+                lastStatus,
+                phase: "parked",
+              },
+              existing.hostRuntime,
+            )
           : handle,
       ),
     ),
@@ -383,4 +406,11 @@ function writeHandles(session: HarnessSession, handles: readonly AgentHandle[]):
       [AGENT_HANDLES_STATE_KEY]: assertPersistableAgentHandleStore({ handles }),
     },
   };
+}
+
+function attachHostRuntime<T extends AgentHandle>(
+  handle: T,
+  hostRuntime: AgentHandleHostRuntime | undefined,
+): T {
+  return (hostRuntime === undefined ? handle : { ...handle, hostRuntime }) as T;
 }

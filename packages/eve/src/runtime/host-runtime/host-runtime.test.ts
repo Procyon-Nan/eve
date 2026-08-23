@@ -7,13 +7,17 @@ import {
   HostRuntimeContextKey,
   HostRuntimePreflightKey,
   InitiatorAuthKey,
+  ParentSessionKey,
   SessionIdKey,
+  SubagentDepthKey,
 } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { defineHostRuntime } from "#public/definitions/agent.js";
 import { HostRuntimeError, isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 import {
   prepareHostRuntimePreflight,
+  getEffectiveDelegatedSubagentNames,
+  isTopLevelHostRuntimeRoot,
   throwHostRuntimeAtStepBoundary,
 } from "#runtime/host-runtime/preflight.js";
 import { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
@@ -221,6 +225,30 @@ describe("host runtime preflight", () => {
       expect(ctx.get(HostRuntimePreflightKey)).toBe(first);
       expect(resolve).toHaveBeenCalledOnce();
     });
+  });
+
+  it("limits delegated specialist authorization to a strictly valid root owner", () => {
+    const root = createContext();
+    root.setVirtualContext(HostRuntimePreflightKey, {
+      delegatedSubagentNames: ["reviewer"],
+      model: createModel(),
+      modelId: "host-model",
+    });
+    expect(isTopLevelHostRuntimeRoot(root)).toBe(true);
+    expect([...getEffectiveDelegatedSubagentNames(root)]).toEqual(["reviewer"]);
+
+    const nested = createContext();
+    nested.set(ParentSessionKey, {
+      callId: "call-1",
+      rootSessionId: "root-1",
+      sessionId: "parent-1",
+      turn: { id: "turn-1", sequence: 0 },
+    });
+    expect(isTopLevelHostRuntimeRoot(nested)).toBe(false);
+
+    const invalid = createContext();
+    invalid.set(SubagentDepthKey, Number.NaN);
+    expect(() => isTopLevelHostRuntimeRoot(invalid)).toThrow(HostRuntimeError);
   });
 
   it("resolves the durable reference again in a later step", async () => {

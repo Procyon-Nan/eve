@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MockLanguageModelV3 } from "ai/test";
 
 import type { ChannelAdapter } from "#channel/adapter.js";
 import { ContextContainer, loadContext } from "#context/container.js";
@@ -27,8 +28,10 @@ import {
   CapabilitiesKey,
   ChannelInstrumentationKey,
   InitiatorAuthKey,
+  HostRuntimeContextKey,
   SessionIdKey,
   SessionKey,
+  TurnDynamicSubagentSelectionsKey,
 } from "#context/keys.js";
 import { BundleKey, ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { createBundledRuntimeCompiledArtifactsSource } from "#runtime/compiled-artifacts-source.js";
@@ -39,6 +42,7 @@ import type {
 import type { RuntimeSandboxRegistry } from "#runtime/sandbox/registry.js";
 import type { ResolvedSandboxDefinition } from "#runtime/types.js";
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
+import { createRuntimeSession, withRuntimeSession } from "#runtime/sessions/runtime-session.js";
 
 const mocks = vi.hoisted(() => ({
   continueRemoteAgentSession: vi.fn(),
@@ -253,6 +257,171 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     ]);
   });
 
+  it.each([
+    ["plain", dispatchRuntimeActionsStep, "running"],
+    ["task", dispatchTaskStep, "addressed"],
+  ] as const)(
+    "creates and durably owns a host specialist through %s dispatch",
+    async (_mode, dispatch, phase) => {
+      const session = createStartSession({ kind: "local" });
+      const ctx = installHostSpecialistContext(session, _mode === "task");
+      const factory = vi.fn(async () => ({
+        providerKind: "baigong-agent",
+        value: "opaque-specialist-reference",
+      }));
+      const runtimeSession = createRuntimeSession(`specialist-${_mode}`);
+      runtimeSession.hostRuntimeProviders.set("baigong-agent", {
+        createSpecialistReference: factory,
+        providerKind: "baigong-agent",
+        resolve: async () => ({
+          delegatedSubagentNames: ["research"],
+          model: new MockLanguageModelV3({ modelId: "host-model", provider: "host" }),
+          modelId: "host-model",
+        }),
+      });
+      const writes: Uint8Array[] = [];
+
+      const result = await withRuntimeSession(runtimeSession, async () =>
+        dispatch({
+          parentContinuationToken: "turn-inbox",
+          parentWritable: createWritable(writes),
+          serializedContext: {},
+          sessionState: BASE_STATE,
+        }),
+      );
+
+      expect(factory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          callId: "call-1",
+          parentReference: { providerKind: "baigong-agent", value: "opaque-root-reference" },
+          parentSessionId: "parent-session",
+          parentTurnId: "turn-1",
+          subagentName: "research",
+        }),
+      );
+      expect(mocks.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          adapter: expect.objectContaining({
+            state: expect.objectContaining({
+              hostRuntime: expect.objectContaining({
+                reference: { providerKind: "baigong-agent", value: "opaque-specialist-reference" },
+              }),
+            }),
+          }),
+          hostRuntime: expect.objectContaining({
+            ownership: "specialist",
+            reference: { providerKind: "baigong-agent", value: "opaque-specialist-reference" },
+          }),
+        }),
+      );
+      expect(
+        getAgentHandleStore(readResultSessionState(result, session))?.handles[0],
+      ).toMatchObject({
+        hostRuntime: {
+          parent: {
+            callId: "call-1",
+            rootSessionId: "parent-session",
+            sessionId: "parent-session",
+            subagentName: "research",
+            turnId: "turn-1",
+          },
+          reference: { providerKind: "baigong-agent", value: "opaque-specialist-reference" },
+        },
+        phase,
+      });
+      expect(JSON.stringify(readWrittenEvents(writes))).not.toContain(
+        "opaque-specialist-reference",
+      );
+      expect(ctx.get(HostRuntimeContextKey)?.reference.value).toBe("opaque-root-reference");
+    },
+  );
+
+  it("replays a specialist factory with the same key and adopts the existing child", async () => {
+    const session = createStartSession({ kind: "local" });
+    installHostSpecialistContext(session, false);
+    const factory = vi.fn(async () => ({
+      providerKind: "baigong-agent",
+      value: "stable-specialist-reference",
+    }));
+    const runtimeSession = createRuntimeSession("specialist-replay");
+    runtimeSession.hostRuntimeProviders.set("baigong-agent", {
+      createSpecialistReference: factory,
+      providerKind: "baigong-agent",
+      resolve: async () => ({
+        delegatedSubagentNames: ["research"],
+        model: new MockLanguageModelV3({ modelId: "host-model", provider: "host" }),
+        modelId: "host-model",
+      }),
+    });
+
+    await withRuntimeSession(runtimeSession, async () =>
+      dispatchRuntimeActionsStep({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      }),
+    );
+    mocks.createSession.mockRejectedValueOnce(
+      new RuntimeSessionOwnershipConflictError({
+        continuationToken: "subagent:parent-session:call-1",
+        ownerSessionId: CHILD_SESSION_ID,
+        sessionId: "replayed-child",
+      }),
+    );
+    const replay = await withRuntimeSession(runtimeSession, async () =>
+      dispatchRuntimeActionsStep({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      }),
+    );
+
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(factory.mock.calls[1]).toEqual(factory.mock.calls[0]);
+    expect(getAgentHandleStore(readResultSessionState(replay, session))?.handles[0]).toMatchObject({
+      address: { sessionId: CHILD_SESSION_ID },
+      hostRuntime: { reference: { value: "stable-specialist-reference" } },
+    });
+  });
+
+  it("rechecks specialist authorization at dispatch before calling the factory", async () => {
+    const session = createStartSession({ kind: "local" });
+    installHostSpecialistContext(session, false);
+    const factory = vi.fn();
+    const runtimeSession = createRuntimeSession("specialist-dispatch-denied");
+    runtimeSession.hostRuntimeProviders.set("baigong-agent", {
+      createSpecialistReference: factory,
+      providerKind: "baigong-agent",
+      resolve: async () => ({
+        delegatedSubagentNames: [],
+        model: new MockLanguageModelV3({ modelId: "host-model", provider: "host" }),
+        modelId: "host-model",
+      }),
+    });
+
+    const result = await withRuntimeSession(runtimeSession, async () =>
+      dispatchRuntimeActionsStep({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      }),
+    );
+
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        output: {
+          code: "HOST_RUNTIME_REFERENCE_INVALID",
+          message: "HOST_RUNTIME_REFERENCE_INVALID",
+        },
+      }),
+    ]);
+    expect(factory).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+
   it("keeps parallel sibling delegation messages isolated", async () => {
     const messages = ["first sibling", "  second sibling\nwith detail  "];
     const session = setPendingRuntimeActionBatch({
@@ -462,6 +631,50 @@ describe("dispatchRuntimeActionsStep child starts", () => {
     ]);
     expect(create).not.toHaveBeenCalled();
     expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+
+  it("passes an inherited root reference to a recursive root copy without owning it", async () => {
+    const session = createNamedStartSession({ name: "agent", nodeId: "__root__" });
+    const { backend } = createSandboxBackend();
+    const ctx = installSandboxContext({ registry: createSandboxRegistry(backend), session });
+    ctx.set(HostRuntimeContextKey, {
+      acceptanceKey: "command-1",
+      ownership: "root",
+      reference: { providerKind: "baigong-agent", value: "opaque-root-reference" },
+    });
+    const runtimeSession = createRuntimeSession("recursive-root-copy");
+    runtimeSession.hostRuntimeProviders.set("baigong-agent", {
+      providerKind: "baigong-agent",
+      resolve: async () => ({
+        model: new MockLanguageModelV3({ modelId: "host-model", provider: "host" }),
+        modelId: "host-model",
+      }),
+    });
+
+    const result = await withRuntimeSession(runtimeSession, async () =>
+      dispatchRuntimeActionsStep({
+        parentContinuationToken: "turn-inbox",
+        parentWritable: createWritable(),
+        serializedContext: {},
+        sessionState: BASE_STATE,
+      }),
+    );
+
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostRuntime: {
+          ownership: "inherited",
+          reference: { providerKind: "baigong-agent", value: "opaque-root-reference" },
+        },
+      }),
+    );
+    const childInput = mocks.createSession.mock.calls[0]?.[0] as
+      | { adapter: { state: Record<string, unknown> } }
+      | undefined;
+    expect(childInput?.adapter.state).not.toHaveProperty("hostRuntime");
+    expect(
+      getAgentHandleStore(readResultSessionState(result, session))?.handles[0],
+    ).not.toHaveProperty("hostRuntime");
   });
 
   it("records a tasks-mode child as an address and derives task identity separately", async () => {
@@ -1413,6 +1626,61 @@ function installContext(
   mocks.readDurableSession.mockResolvedValue(session);
 }
 
+function installHostSpecialistContext(session: HarnessSession, tasks: boolean): ContextContainer {
+  const ctx = new ContextContainer();
+  ctx.set(AuthKey, null);
+  ctx.set(InitiatorAuthKey, null);
+  ctx.set(SessionIdKey, session.sessionId);
+  ctx.set(ChannelKey, ADAPTER);
+  ctx.set(HostRuntimeContextKey, {
+    acceptanceKey: "command-1",
+    ownership: "root",
+    reference: { providerKind: "baigong-agent", value: "opaque-root-reference" },
+  });
+  ctx.set(TurnDynamicSubagentSelectionsKey, {
+    "subagents/research": {
+      agentConfig: {
+        description: "Research",
+        runtime: { kind: "eve.host-runtime", providerKind: "baigong-agent" },
+      },
+      kind: "subagent",
+      prepared: {
+        description: "Research",
+        inputSchema: {},
+        kind: "subagent",
+        logicalPath: "agent/subagents/research/agent.ts",
+        name: "research",
+        nodeId: "subagents/research",
+        sourceId: "agent/subagents/research/agent.ts",
+      },
+    },
+  });
+  ctx.set(BundleKey, {
+    compiledArtifactsSource: {},
+    resolvedAgent: { config: tasks ? { experimental: { tasks: true } } : {} },
+    subagentRegistry: {
+      dynamicNodeIds: new Set(["subagents/research"]),
+      subagentsByNodeId: new Map([
+        [
+          "subagents/research",
+          { definition: { dynamic: true, kind: "subagent", name: "research" } },
+        ],
+      ]),
+    },
+    turnAgent: {
+      id: "test-agent",
+      instructions: [],
+      model: { id: "test-model" },
+      skills: [],
+      tools: [],
+      workspaceSpec: {},
+    },
+  } as never);
+  mocks.deserializeContext.mockResolvedValue(ctx);
+  mocks.readDurableSession.mockResolvedValue(session);
+  return ctx;
+}
+
 function createSandboxBackend() {
   const sandbox = mockSandbox({ id: "shared-parent-sandbox" });
   const create = vi.fn(async (input: SandboxBackendCreateInput) => ({
@@ -1458,7 +1726,7 @@ function installSandboxContext(input: {
   };
   readonly registry: RuntimeSandboxRegistry;
   readonly session: HarnessSession;
-}): void {
+}): ContextContainer {
   const root = {
     agent: { config: { name: "parent-agent" }, connections: [] },
     nodeId: "__root__",
@@ -1498,6 +1766,7 @@ function installSandboxContext(input: {
 
   mocks.deserializeContext.mockResolvedValue(ctx);
   mocks.readDurableSession.mockResolvedValue(input.session);
+  return ctx;
 }
 
 function createWritable(writes: Uint8Array[] = []): WritableStream<Uint8Array> {

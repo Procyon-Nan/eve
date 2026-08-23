@@ -17,6 +17,7 @@ import {
   AuthKey,
   CapabilitiesKey,
   ChannelInstrumentationKey,
+  HostRuntimeContextKey,
   InitiatorAuthKey,
   SandboxKey,
 } from "#context/keys.js";
@@ -55,6 +56,7 @@ import type {
 import { type DurableSessionState, readDurableSession } from "#execution/durable-session-store.js";
 import {
   createRecursiveAgentRootOnlyResult,
+  createHostRuntimeSubagentFailure,
   createUnavailableDynamicSubagentResult,
   getSubagentName,
 } from "#execution/dispatch-action-failures.js";
@@ -73,6 +75,12 @@ import { resolveSubagentDepth } from "#harness/subagent-depth.js";
 import { getDynamicSubagentSelection } from "#context/dynamic-subagent-lifecycle.js";
 import { resolveEffectiveAgentRuntime } from "#execution/effective-agent-config.js";
 import { isTaskControlAction } from "#execution/tasks/parent/dispatch.js";
+import {
+  getEffectiveDelegatedSubagentNames,
+  prepareHostRuntimePreflight,
+  throwHostRuntimeAtStepBoundary,
+} from "#runtime/host-runtime/preflight.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 const log = createLogger("execution.dispatch-runtime-actions");
 
@@ -160,6 +168,8 @@ export interface PreparedRuntimeActionDispatch {
    */
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
+  readonly authorizedSpecialistNames: ReadonlySet<string>;
+  readonly parentHostRuntime: DurableHostRuntimeContext | undefined;
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly sandboxSessionId: string;
   readonly serializedContext: Record<string, unknown>;
@@ -191,6 +201,11 @@ export async function prepareRuntimeActionDispatch(input: {
   assertUniqueRuntimeActionCallIds(batch.actions);
 
   const ctx = await deserializeContext(input.serializedContext);
+  try {
+    await prepareHostRuntimePreflight(ctx);
+  } catch (error) {
+    throwHostRuntimeAtStepBoundary(error);
+  }
   const bundle = ctx.require(BundleKey);
   const effectiveAgent = resolveEffectiveAgentRuntime(bundle, ctx);
   let session = hydrateDurableSession({
@@ -201,6 +216,8 @@ export async function prepareRuntimeActionDispatch(input: {
     turnAgent: effectiveAgent.turnAgent,
   });
   const adapter = ctx.require(ChannelKey);
+  const authorizedSpecialistNames = getEffectiveDelegatedSubagentNames(ctx);
+  const parentHostRuntime = ctx.get(HostRuntimeContextKey);
 
   // A corrupt handle store and rejected actions must resolve before sandbox
   // initialization, which can provision backend resources and run onSession.
@@ -211,6 +228,8 @@ export async function prepareRuntimeActionDispatch(input: {
     ctx,
     session,
     taskControls: input.taskControls,
+    authorizedSpecialistNames,
+    parentHostRuntime,
   });
 
   const sandboxSessionId = resolveActiveSandboxSessionId(adapter.state, session.sessionId);
@@ -237,6 +256,8 @@ export async function prepareRuntimeActionDispatch(input: {
     fanoutSize: plan.filter((entry) => entry.kind === "start" && entry.target.kind === "local")
       .length,
     initiatorAuth: ctx.get(InitiatorAuthKey) ?? null,
+    authorizedSpecialistNames,
+    parentHostRuntime,
     parentTraceContext: readSessionTraceContext(input.serializedContext, session.sessionId),
     plan,
     sandboxSessionId,
@@ -355,6 +376,8 @@ function planDispatch(input: {
   readonly ctx: Parameters<typeof getDynamicSubagentSelection>[0];
   readonly session: RuntimeSession;
   readonly taskControls: boolean;
+  readonly authorizedSpecialistNames: ReadonlySet<string>;
+  readonly parentHostRuntime: DurableHostRuntimeContext | undefined;
 }): DispatchPlanEntry[] {
   const handles = getAgentHandleStore(input.session.state)?.handles ?? [];
 
@@ -404,6 +427,8 @@ function planDispatch(input: {
       ctx: input.ctx,
       delegationMessage,
       session: input.session,
+      authorizedSpecialistNames: input.authorizedSpecialistNames,
+      parentHostRuntime: input.parentHostRuntime,
     });
   });
 }
@@ -419,6 +444,8 @@ function classifyFreshStart(input: {
   readonly ctx: Parameters<typeof getDynamicSubagentSelection>[0];
   readonly delegationMessage: string;
   readonly session: RuntimeSession;
+  readonly authorizedSpecialistNames: ReadonlySet<string>;
+  readonly parentHostRuntime: DurableHostRuntimeContext | undefined;
 }): Extract<DispatchPlanEntry, { kind: "reject" | "start" }> {
   const { action } = input;
   const registry = input.bundle.subagentRegistry.subagentsByNodeId;
@@ -462,6 +489,18 @@ function classifyFreshStart(input: {
         dynamicSubagentSelection?.kind === "subagent"
           ? dynamicSubagentSelection.agentConfig
           : undefined;
+      if (
+        dynamicAgentConfig?.runtime !== undefined &&
+        (input.parentHostRuntime?.ownership !== "root" ||
+          dynamicAgentConfig.runtime.providerKind !==
+            input.parentHostRuntime.reference.providerKind ||
+          !input.authorizedSpecialistNames.has(action.subagentName))
+      ) {
+        return {
+          kind: "reject",
+          result: createHostRuntimeSubagentFailure(action, "HOST_RUNTIME_REFERENCE_INVALID"),
+        };
+      }
       const registered = registry.get(action.nodeId);
       const description =
         dynamicAgentConfig?.description ??
@@ -508,6 +547,8 @@ export async function startSubagent(input: {
   readonly currentSession: RuntimeSession;
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
+  readonly authorizedSpecialistNames: ReadonlySet<string>;
+  readonly parentHostRuntime: DurableHostRuntimeContext | undefined;
   readonly parentContinuationToken: string | undefined;
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
@@ -539,6 +580,8 @@ export async function startSubagent(input: {
         dynamicSubagentAgentConfig: input.target.dynamicSubagentAgentConfig,
         fanoutSize: input.fanoutSize,
         initiatorAuth: input.initiatorAuth,
+        authorizedSpecialistNames: input.authorizedSpecialistNames,
+        parentHostRuntime: input.parentHostRuntime,
         parentContinuationToken: input.parentContinuationToken,
         parentTraceContext,
         persistentSessions: input.persistentSessions,

@@ -14,6 +14,10 @@ import { createLogger, logError } from "#internal/logging.js";
 import type { RuntimeSubagentCallActionRequest } from "#runtime/actions/types.js";
 import type { CompiledBundle } from "#runtime/sessions/runtime-context-keys.js";
 import { toErrorMessage } from "#shared/errors.js";
+import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
+import { prepareLocalSubagentHostRuntime } from "#execution/local-subagent-host-runtime.js";
+import { isHostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { createHostRuntimeSubagentFailure } from "#execution/dispatch-action-failures.js";
 
 const log = createLogger("execution.subagent-start-local");
 
@@ -34,6 +38,8 @@ export async function startLocalSubagent(input: {
   readonly dynamicSubagentAgentConfig?: DynamicSubagentAgentConfig;
   readonly fanoutSize: number;
   readonly initiatorAuth: Parameters<typeof buildSubagentRunInput>[0]["initiatorAuth"];
+  readonly authorizedSpecialistNames: ReadonlySet<string>;
+  readonly parentHostRuntime: DurableHostRuntimeContext | undefined;
   readonly parentContinuationToken: string | undefined;
   readonly parentTraceContext: Parameters<typeof buildSubagentRunInput>[0]["parentTraceContext"];
   readonly persistentSessions: boolean;
@@ -43,9 +49,45 @@ export async function startLocalSubagent(input: {
   readonly taskOwned: boolean;
 }): Promise<DispatchOutcome> {
   const { action, source } = input;
+  let preparedHostRuntime: Awaited<ReturnType<typeof prepareLocalSubagentHostRuntime>>;
+  try {
+    preparedHostRuntime = await prepareLocalSubagentHostRuntime({
+      auth: input.auth,
+      authorizedSpecialistNames: input.authorizedSpecialistNames,
+      callId: action.callId,
+      config: input.dynamicSubagentAgentConfig,
+      initiatorAuth: input.initiatorAuth,
+      parentHostRuntime: input.parentHostRuntime,
+      parentSessionId: input.session.sessionId,
+      parentTurnId: input.batchEvent.turnId,
+      persistentSessions: input.persistentSessions,
+      rootSessionId: input.session.rootSessionId ?? input.session.sessionId,
+      subagentName: action.subagentName,
+      taskOwned: input.taskOwned,
+    });
+  } catch (error) {
+    if (!isHostRuntimeError(error)) throw error;
+    return {
+      kind: "error",
+      result: createHostRuntimeSubagentFailure(action, error.code),
+      session: input.currentSession,
+    };
+  }
+
+  const inheritedHostRuntime: DurableHostRuntimeContext | undefined =
+    preparedHostRuntime.hostRuntime === undefined &&
+    source.type === "runtime" &&
+    action.subagentName === "agent" &&
+    input.parentHostRuntime !== undefined
+      ? {
+          ownership: "inherited",
+          reference: input.parentHostRuntime.reference,
+        }
+      : undefined;
+  const childHostRuntime = preparedHostRuntime.hostRuntime ?? inheritedHostRuntime;
   const childRuntime = createWorkflowRuntime({
     compiledArtifactsSource: input.bundle.compiledArtifactsSource,
-    dynamicSubagentAgentConfig: input.dynamicSubagentAgentConfig,
+    dynamicSubagentAgentConfig: preparedHostRuntime.config,
     nodeId: action.nodeId,
   });
   const { childContinuationToken, runInput } = buildSubagentRunInput({
@@ -58,6 +100,7 @@ export async function startLocalSubagent(input: {
     fanoutSize: input.fanoutSize,
     initiatorAuth: input.initiatorAuth,
     graph: input.bundle.graph,
+    hostRuntime: childHostRuntime,
     parentContinuationToken: input.parentContinuationToken,
     parentTraceContext: input.parentTraceContext,
     persistentSessions: input.persistentSessions,
@@ -80,6 +123,13 @@ export async function startLocalSubagent(input: {
   // step-result commit still replays the whole dispatch step, so the
   // orphan window shrinks to that boundary rather than disappearing.
   const preparedSession = prepareAgentStart(input.currentSession, {
+    hostRuntime:
+      preparedHostRuntime.hostRuntime?.parent === undefined
+        ? undefined
+        : {
+            parent: preparedHostRuntime.hostRuntime.parent,
+            reference: preparedHostRuntime.hostRuntime.reference,
+          },
     identity,
     operation,
     target: { continuationToken: childContinuationToken, kind: targetKind },

@@ -103,6 +103,30 @@ describe("buildSubagentRunInput", () => {
     expect(runInput.mode).toBe("task");
   });
 
+  it("propagates specialist ownership to child input and framework adapter state", () => {
+    const parent = {
+      callId: "call-1",
+      rootSessionId: "parent-session",
+      sessionId: "parent-session",
+      subagentName: "linear",
+      turnId: "turn-17",
+    } as const;
+    const reference = { providerKind: "baigong-agent", value: "opaque-specialist" } as const;
+    const hostRuntime = { ownership: "specialist", parent, reference } as const;
+    const { runInput } = buildRuntimeSubagentRunInput({
+      action: makeAction(),
+      auth: null,
+      batchEvent: { sequence: 5, turnId: "turn-17" },
+      hostRuntime,
+      initiatorAuth: null,
+      session: makeSession(),
+    });
+
+    expect(runInput.hostRuntime).toEqual(hostRuntime);
+    expect(runInput.adapter.state).toMatchObject({ hostRuntime: { parent, reference } });
+    expect(runInput.input).not.toHaveProperty("hostRuntime");
+  });
+
   it("routes parent notifications to an active turn inbox when supplied", () => {
     const { runInput } = buildRuntimeSubagentRunInput({
       action: makeAction(),
