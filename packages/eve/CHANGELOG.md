@@ -1,5 +1,17 @@
 # eve
 
+## 0.40.0-baigong.0
+
+### Patch Changes
+
+- 038facb: Preserve `toModelOutput` when session- and turn-scoped dynamic tools are replayed. Rich media and redacted outputs now keep their authored model projection instead of falling back to the raw tool result.
+- 4b4c181: Ignore application data and CodeGraph index directories while watching authored development sources, preventing generated state from triggering unnecessary rebuilds.
+- d075cfc: Add `disableSandbox()` for agent nodes that need no filesystem or process runtime. Disabled nodes pass multimodal attachments directly to the model, omit sandbox-backed framework tools, and reject capabilities that require sandbox files during compilation.
+- 59b04d7: Keep conversation sessions resumable after model-call failures exhaust their bounded retry budget. Correct the model or provider configuration, then send another message through the same session instead of starting over.
+- f052188: Local subagent child streams now identify their immediate parent session, turn, tool call, and subagent name in the first `session.started` event.
+- 5e66f46: Add trusted host runtime snapshots for server-owned model, instruction, tool, timeout, and specialist configuration. Opaque references now stay durable through root and delegated execution, with replay-safe acceptance and terminal release notifications.
+- fb51feb: `subagent.called` events now include the exact delegation message for local, remote, dynamic, continued, and Workflow-dispatched subagent calls, allowing clients to attribute parent and child work without parsing synthesized prompts.
+
 ## 0.40.0
 
 ### Minor Changes
