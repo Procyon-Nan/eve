@@ -130,6 +130,98 @@ availability as capability composition, not as the only authorization
 boundary: sensitive child tools still need their own authorization and
 approval checks.
 
+## Host runtime snapshots
+
+Use a host runtime provider when a trusted server must lock the model, business
+instructions, ordinary tools, and specialist authorization to one external
+configuration version. The server passes only an opaque `HostRuntimeReference`;
+eve persists that reference and resolves its live capabilities before each
+model-call step.
+
+Register the provider during server startup:
+
+```ts
+import { registerHostRuntimeProvider } from "eve";
+import { hostRuntimeStore } from "./host-runtime-store";
+
+registerHostRuntimeProvider({
+  providerKind: "my-host",
+  async resolve({ reference, sessionId, parent }) {
+    return hostRuntimeStore.resolve(reference.value, { parent, sessionId });
+  },
+  async createSpecialistReference(input) {
+    return hostRuntimeStore.createSpecialistReference(input);
+  },
+  async release(input) {
+    await hostRuntimeStore.release(input);
+  },
+});
+```
+
+`resolve` returns a live `LanguageModel` and `modelId`. It may also return
+`instructions`, `tools`, `contextWindowTokens`, `modelCallTimeoutMs`, and
+`delegatedSubagentNames`. Every tool entry must be created with `defineTool`.
+The resolved values stay in the current preflight scope; eve never serializes
+the model, tool implementations, instructions, or provider errors. Make
+`resolve` idempotent because a workflow retry or cold recovery can resolve the
+same durable reference again.
+
+Author the root slots as consumers of the resolved snapshot:
+
+```ts title="agent/agent.ts"
+import { defineAgent, defineDynamic, hostRuntimeModel } from "eve";
+
+export default defineAgent({
+  model: defineDynamic({
+    events: {
+      "step.started": (_event, ctx) => hostRuntimeModel(ctx),
+    },
+  }),
+});
+```
+
+```ts title="agent/instructions/business.ts"
+import { hostRuntimeInstructions } from "eve";
+import { defineDynamic, defineInstructions } from "eve/instructions";
+
+export default defineDynamic({
+  events: {
+    "turn.started": (_event, ctx) => {
+      const content = hostRuntimeInstructions(ctx);
+      return content === undefined ? null : defineInstructions({ content });
+    },
+  },
+});
+```
+
+```ts title="agent/tools/host.ts"
+import { hostRuntimeTools } from "eve";
+import { defineDynamic } from "eve/tools";
+
+export default defineDynamic({
+  events: {
+    "step.started": (_event, ctx) => hostRuntimeTools(ctx) ?? null,
+  },
+});
+```
+
+`hostRuntimeModel`, `hostRuntimeInstructions`, and `hostRuntimeTools` expose
+only their named capability. They never expose the durable reference to
+authored code. A deterministic `HOST_RUNTIME_*` error fails the current root
+turn or specialist invocation as a unit; an unclassified provider failure
+keeps the normal workflow retry behavior. `modelCallTimeoutMs` limits one model
+request, including compaction, and composes with cancellation without limiting
+tool execution or the whole turn.
+
+Attach each root-turn reference in the built-in eve channel's authenticated
+server callback with `withHostRuntime(auth, { acceptanceKey, reference })`.
+For host-backed create, send, and respond commands, attach a new acceptance key
+and the root reference for that logical turn. The handoff is server-only: it
+does not enter auth attributes, client context, request JSON, model messages,
+or public events. See the
+[TypeScript API reference](../reference/typescript-api#the-define-helpers) for
+the provider lifecycle and acceptance probe.
+
 ## Dynamic tools
 
 Pass `defineDynamic` an `events` object whose handlers return either a single `defineTool(...)`, a `Record<string, defineTool(...)>`, or `null` for no tools. Wrap every entry in `defineTool()`. The wrapper stamps them so their `execute` functions survive workflow step boundaries.

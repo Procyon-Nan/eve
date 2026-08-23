@@ -1,6 +1,6 @@
 ---
 issue: TBD
-status: in-progress
+status: implemented
 last_updated: "2026-08-23"
 ---
 
@@ -214,7 +214,7 @@ the same commit as its code.
       replay-safe dispatch for plain, task, and Workflow calls.
 - [x] Phase 5: Add root and specialist terminal release across completed, failed, cancelled, and
       start-failed paths.
-- [ ] Phase 6: Complete public documentation, extension compatibility metadata, full validation,
+- [x] Phase 6: Complete public documentation, extension compatibility metadata, full validation,
       and final code review.
 
 ## Phase gates and commit boundaries

@@ -57,6 +57,7 @@ const fsMocks = vi.hoisted(() => ({
 vi.mock("node:fs/promises", () => fsMocks);
 
 vi.mock("../../application/package.js", () => ({
+  resolveInstalledPackageInfo: () => ({ name: "eve", version: "0.40.0" }),
   resolvePackageDependencyPath: (specifier: string) =>
     `G:\\projects\\test-eve\\node_modules\\.pnpm\\${specifier}@1.0.0\\node_modules\\${specifier}\\dist\\index.js`,
   resolvePackageRoot: () =>

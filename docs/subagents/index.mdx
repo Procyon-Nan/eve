@@ -101,6 +101,55 @@ module in that dynamic subagent.
 See [Dynamic capabilities](./guides/dynamic-capabilities#dynamic-subagents) for
 scope precedence, failure behavior, and the dispatch-time guard.
 
+### Host-supplied specialist runtimes
+
+A trusted server can supply a specialist's model, business instructions, and
+ordinary dynamic tools as one locked runtime snapshot. Declare the same
+provider on `defineDynamic` and the returned agent so eve can reject an
+unauthorized specialist before its resolver runs:
+
+```ts title="agent/subagents/reviewer/agent.ts"
+import { defineAgent, defineDynamic, defineHostRuntime } from "eve";
+
+const runtime = defineHostRuntime({ providerKind: "my-host" });
+
+export default defineDynamic({
+  runtime,
+  events: {
+    "turn.started": () =>
+      defineAgent({
+        description: "Review the delegated work.",
+        runtime,
+      }),
+  },
+});
+```
+
+Host-runtime specialists are turn-scoped local subagents. They cannot select
+their own model or compaction model. With agent messaging enabled, only a
+task-owned call may use a host-runtime specialist; a plain conversation call
+cannot leave one parked for later messages. The top-level root snapshot lists
+authorized names in `delegatedSubagentNames`, and eve checks the authorization
+again immediately before asking the provider for a child reference. A nested
+session cannot pass that authorization to another host-runtime specialist.
+
+The specialist directory still owns its static instructions, sandbox choice,
+connections, and other authored slots. Use `hostRuntimeInstructions` and
+`hostRuntimeTools` in dynamic instruction and tool slots to add the host
+snapshot without exposing its opaque reference. A built-in `agent` copy can
+reuse the root turn's snapshot, but it receives no specialist authorization
+and does not own a separate reference.
+
+The provider's `createSpecialistReference` operation must be idempotent for the
+parent session, parent turn, call ID, and subagent name. eve retains that child
+reference through task and Workflow dispatch, then calls the provider's
+optional `release` only after the owning root turn or complete specialist call
+has committed a terminal outcome: `completed`, `failed`, `cancelled`, or the
+specialist-only `start_failed`. Release is a best-effort, idempotent
+notification; a release failure does not roll back the terminal eve state. See
+[Host runtime snapshots](./guides/dynamic-capabilities#host-runtime-snapshots)
+for provider registration and root capability setup.
+
 Minimum files:
 
 ```text

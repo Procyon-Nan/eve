@@ -30,32 +30,50 @@ export default defineTool({
 
 ## The define\* helpers
 
-| Helper                                                | Import from                                          | Authored at                                                                | Guide                                                  |
-| ----------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `defineAgent`                                         | `eve`                                                | `agent/agent.ts`                                                           | [agent.ts](../agent-config)                            |
-| `defineTool`                                          | `eve/tools`                                          | `agent/tools/<name>.ts`                                                    | [Tools](../tools)                                      |
-| `defineDynamic`                                       | `eve`, `eve/tools`, `eve/skills`, `eve/instructions` | dynamic model or subagent `agent.ts`; `agent/{tools,skills,instructions}/` | [Dynamic capabilities](../guides/dynamic-capabilities) |
-| `defineMcpClientConnection`                           | `eve/connections`                                    | `agent/connections/<name>.ts`                                              | [MCP connections](../connections/mcp)                  |
-| `defineOpenAPIConnection`                             | `eve/connections`                                    | `agent/connections/<name>.ts`                                              | [OpenAPI connections](../connections/openapi)          |
-| `defineChannel`                                       | `eve/channels`                                       | `agent/channels/<name>.ts`                                                 | [Custom channels](../channels/custom)                  |
-| `eveChannel`, `slackChannel`, and the other platforms | `eve/channels/<platform>`                            | `agent/channels/<platform>.ts`                                             | [Channels](../channels/overview)                       |
-| `defineSkill`                                         | `eve/skills`                                         | `agent/skills/<name>.ts`                                                   | [Skills](../skills)                                    |
-| `defineInstructions`                                  | `eve/instructions`                                   | `agent/instructions.ts`                                                    | [Instructions](../instructions)                        |
-| `defineHook`                                          | `eve/hooks`                                          | `agent/hooks/<slug>.ts`                                                    | [Hooks](../guides/hooks)                               |
-| `defineSchedule`                                      | `eve/schedules`                                      | `agent/schedules/<name>.ts`                                                | [Schedules](../schedules)                              |
-| `defineState`                                         | `eve/context`                                        | tools, hooks, lifecycle                                                    | [Session context](../guides/session-context)           |
-| `defineSandbox`                                       | `eve/sandbox`                                        | `agent/sandbox.ts`                                                         | [Sandbox](../sandbox)                                  |
-| `disableSandbox`                                      | `eve/sandbox`                                        | `agent/sandbox.ts`                                                         | [Sandbox](../sandbox#disabling-the-sandbox)            |
-| `defineInstrumentation`                               | `eve/instrumentation`                                | `agent/instrumentation.ts`                                                 | [instrumentation.ts](../guides/instrumentation)        |
-| `defineRemoteAgent`                                   | `eve`                                                | `agent/subagents/<id>/agent.ts`                                            | [Remote agents](../guides/remote-agents)               |
-| `defineEval`                                          | `eve/evals`                                          | `evals/*.eval.ts`                                                          | [Evals](../evals/overview)                             |
-| `defineEvalConfig`                                    | `eve/evals`                                          | `evals/evals.config.ts`                                                    | [Evals](../evals/overview)                             |
-| `mockModel`                                           | `eve/evals`                                          | Deterministic fixture agent models                                         | [Evals](../evals/overview)                             |
-| `useEveAgent`                                         | `eve/react`, `eve/vue`, `eve/svelte`                 | frontend                                                                   | [Frontend](../guides/frontend/overview)                |
+| Helper                                                | Import from                                          | Authored at                                                                | Guide                                                                           |
+| ----------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `defineAgent`                                         | `eve`                                                | `agent/agent.ts`                                                           | [agent.ts](../agent-config)                                                     |
+| `defineTool`                                          | `eve/tools`                                          | `agent/tools/<name>.ts`                                                    | [Tools](../tools)                                                               |
+| `defineDynamic`                                       | `eve`, `eve/tools`, `eve/skills`, `eve/instructions` | dynamic model or subagent `agent.ts`; `agent/{tools,skills,instructions}/` | [Dynamic capabilities](../guides/dynamic-capabilities)                          |
+| `defineMcpClientConnection`                           | `eve/connections`                                    | `agent/connections/<name>.ts`                                              | [MCP connections](../connections/mcp)                                           |
+| `defineOpenAPIConnection`                             | `eve/connections`                                    | `agent/connections/<name>.ts`                                              | [OpenAPI connections](../connections/openapi)                                   |
+| `defineChannel`                                       | `eve/channels`                                       | `agent/channels/<name>.ts`                                                 | [Custom channels](../channels/custom)                                           |
+| `eveChannel`, `slackChannel`, and the other platforms | `eve/channels/<platform>`                            | `agent/channels/<platform>.ts`                                             | [Channels](../channels/overview)                                                |
+| `defineSkill`                                         | `eve/skills`                                         | `agent/skills/<name>.ts`                                                   | [Skills](../skills)                                                             |
+| `defineInstructions`                                  | `eve/instructions`                                   | `agent/instructions.ts`                                                    | [Instructions](../instructions)                                                 |
+| `defineHook`                                          | `eve/hooks`                                          | `agent/hooks/<slug>.ts`                                                    | [Hooks](../guides/hooks)                                                        |
+| `defineSchedule`                                      | `eve/schedules`                                      | `agent/schedules/<name>.ts`                                                | [Schedules](../schedules)                                                       |
+| `defineState`                                         | `eve/context`                                        | tools, hooks, lifecycle                                                    | [Session context](../guides/session-context)                                    |
+| `defineSandbox`                                       | `eve/sandbox`                                        | `agent/sandbox.ts`                                                         | [Sandbox](../sandbox)                                                           |
+| `disableSandbox`                                      | `eve/sandbox`                                        | `agent/sandbox.ts`                                                         | [Sandbox](../sandbox#disabling-the-sandbox)                                     |
+| `defineInstrumentation`                               | `eve/instrumentation`                                | `agent/instrumentation.ts`                                                 | [instrumentation.ts](../guides/instrumentation)                                 |
+| `defineRemoteAgent`                                   | `eve`                                                | `agent/subagents/<id>/agent.ts`                                            | [Remote agents](../guides/remote-agents)                                        |
+| `defineHostRuntime`                                   | `eve`                                                | dynamic local specialist `agent.ts`                                        | [Host runtime snapshots](../guides/dynamic-capabilities#host-runtime-snapshots) |
+| `defineEval`                                          | `eve/evals`                                          | `evals/*.eval.ts`                                                          | [Evals](../evals/overview)                                                      |
+| `defineEvalConfig`                                    | `eve/evals`                                          | `evals/evals.config.ts`                                                    | [Evals](../evals/overview)                                                      |
+| `mockModel`                                           | `eve/evals`                                          | Deterministic fixture agent models                                         | [Evals](../evals/overview)                                                      |
+| `useEveAgent`                                         | `eve/react`, `eve/vue`, `eve/svelte`                 | frontend                                                                   | [Frontend](../guides/frontend/overview)                                         |
 
 A few additional helpers round out the set: `defineGlobTool`, `defineGrepTool`, `disableTool`, `experimental_workflow`, and `webSearch` from `eve/tools` (see [Built-in tools](../concepts/built-in-tools)), `sleep` from `eve/tools/sleep`, the route verbs `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`WS` from `eve/channels`, the approval policies `always`/`once`/`never` from `eve/tools/approval`, and the channel auth helpers `localDev`/`vercelOidc`/`placeholderAuth` from `eve/channels/auth`. To wrap a framework-provided tool, import its definition from `eve/tools/defaults` (`bash`, `readFile`, `writeFile`, `glob`, `grep`, `webFetch`, `todo`, `loadSkill`). `AgentReasoningDefinition` is exported from `eve` for the top-level `defineAgent({ reasoning })` setting. `AgentLimitsDefinition` is exported for `defineAgent({ limits })`. `AgentWorkflowDefinition` and `AgentWorkflowWorldDefinition` are exported from `eve` for the `defineAgent({ experimental: { workflow } })` config shape. `ExperimentalWorkflowToolInput`, `WebSearchToolInput`, and `WebSearchProvider` are exported from `eve/tools` for their corresponding tool configuration helpers.
 
 `defineInstructions` accepts `{ content: string, role?: "system" | "user" }`; omitted `role` means `"system"`. Its `eve/instructions` version of `defineDynamic` accepts only `session.started` and `turn.started` handlers returning `defineInstructions(...)` or `null`. The legacy `{ markdown: string }` definition remains available as a deprecated system-role form.
+
+Host integrations import `registerHostRuntimeProvider`, `withHostRuntime`,
+`hostRuntimeModel`, `hostRuntimeInstructions`, and `hostRuntimeTools` from
+`eve`. `HostRuntimeError` exposes the deterministic `HOST_RUNTIME_*` codes a
+provider may use to reject an invalid or unavailable reference. The provider,
+reference, resolved-runtime, parent-lineage, release, and trusted-input types
+are exported from the same entrypoint.
+
+`withHostRuntime(auth, { acceptanceKey, reference })` attaches a verified,
+server-only handoff to the principal returned by the built-in eve channel's
+auth callback. The handoff is absent from `SessionAuthContext`, enumerable auth
+attributes, JSON, client context, and public messages. Create, send, and
+respond durably record `ACCEPTED` or `NOT_ACCEPTED` before returning a definite
+response. An authenticated host can query
+`GET /eve/v1/host-runtime/acceptance/:acceptanceKey`; the auth callback must
+attach the same acceptance key, the response contains only the final status,
+and an indeterminate read returns `503` with `Retry-After: 1`.
 
 ## Runtime context (`ctx`)
 
@@ -73,7 +91,7 @@ A few additional helpers round out the set: `defineGlobTool`, `defineGrepTool`, 
 
 | Import                                                      | Holds                                                                                                     |
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `eve`                                                       | `defineAgent`, `defineRemoteAgent`, `defineDynamic`, agent config types                                   |
+| `eve`                                                       | agent definitions, dynamic capability helpers, and host runtime provider APIs                             |
 | `eve/tools`                                                 | `defineTool`, `defineDynamic`, `defineGlobTool`, `defineGrepTool`, `disableTool`, `experimental_workflow` |
 | `eve/tools/defaults`                                        | framework tool definitions as plain values                                                                |
 | `eve/tools/approval`                                        | `always`, `once`, `never`                                                                                 |
