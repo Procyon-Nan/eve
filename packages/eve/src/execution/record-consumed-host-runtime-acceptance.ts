@@ -1,5 +1,5 @@
 import type { DeliverHookPayload } from "#channel/types.js";
-import { recordHostRuntimeAcceptanceStep } from "#runtime/host-runtime/acceptance.js";
+import { recordHostRuntimeAcceptanceStep } from "#execution/record-host-runtime-acceptance-step.js";
 
 export async function recordConsumedHostRuntimeAcceptance(
   delivery: DeliverHookPayload,

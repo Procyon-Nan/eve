@@ -1,8 +1,8 @@
 import { getWorkflowMetadata } from "#compiled/@workflow/core/index.js";
 
+import { recordHostRuntimeAcceptanceStep } from "#execution/record-host-runtime-acceptance-step.js";
 import { createSessionCommandInbox } from "#execution/session-command-inbox.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
-import { recordHostRuntimeAcceptanceStep } from "#runtime/host-runtime/acceptance.js";
 import type { DurableHostRuntimeContext } from "#shared/host-runtime.js";
 
 export async function hostRuntimeSessionInboxWorkflow(): Promise<

@@ -102,13 +102,6 @@ export async function recordHostRuntimeAcceptance(
   }
 }
 
-/** Records acceptance from the durable session driver after it consumes a command. */
-export async function recordHostRuntimeAcceptanceStep(acceptanceKey: string): Promise<void> {
-  "use step";
-
-  await recordHostRuntimeAcceptance(acceptanceKey, "ACCEPTED");
-}
-
 /** Reads the final decision from the retained durable receipt. */
 export async function queryHostRuntimeAcceptance(
   acceptanceKey: string,

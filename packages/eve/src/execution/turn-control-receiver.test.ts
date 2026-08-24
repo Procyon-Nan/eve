@@ -4,12 +4,12 @@ import type { DeliverHookPayload } from "#channel/types.js";
 import type { DurableSessionState } from "#execution/durable-session-store.js";
 import { forwardTurnCancellationStep } from "#execution/forward-turn-cancellation-step.js";
 import { forwardTurnDeliveryStep } from "#execution/forward-turn-delivery-step.js";
+import { recordHostRuntimeAcceptanceStep } from "#execution/record-host-runtime-acceptance-step.js";
 import { reportDroppedWirePayloadStep } from "#execution/report-dropped-wire-payload-step.js";
 import type { SessionCommandInbox, SessionInboxPayload } from "#execution/session-command-inbox.js";
 import type { TurnControlPayload } from "#execution/turn-control-protocol.js";
 import { TurnControlReceiver } from "#execution/turn-control-receiver.js";
 import { encodeSessionCommandV2 } from "#execution/wire/session-inbox-wire.v2.js";
-import { recordHostRuntimeAcceptanceStep } from "#runtime/host-runtime/acceptance.js";
 
 const createHookMock = vi.fn();
 
@@ -29,7 +29,7 @@ vi.mock("./report-dropped-wire-payload-step.js", () => ({
   reportDroppedWirePayloadStep: vi.fn(),
 }));
 
-vi.mock("#runtime/host-runtime/acceptance.js", () => ({
+vi.mock("#execution/record-host-runtime-acceptance-step.js", () => ({
   recordHostRuntimeAcceptanceStep: vi.fn().mockResolvedValue(undefined),
 }));
 

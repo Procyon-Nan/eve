@@ -64,6 +64,11 @@ class InspectableWorkflowBundleBuilder extends WorkflowBundleBuilder {
   get snapshot() {
     return this.config;
   }
+
+  async discoveredEntries() {
+    const inputs = await this.getInputFiles();
+    return await this.discoverEntries(inputs, this.outDir);
+  }
 }
 
 class StepEntryOnlyWorkflowBundleBuilder extends WorkflowBundleBuilder {
@@ -139,6 +144,24 @@ describe("WorkflowBundleBuilder", () => {
     expect(builder.snapshot.projectRoot).toBe(appRoot);
     expect(builder.snapshot.workingDir).toBe(rootDir);
     expect(builder.snapshot.dirs).toEqual([resolvePackageSourceDirectoryPath("src/execution")]);
+  });
+
+  it("discovers the host-runtime acceptance receipt step", async () => {
+    const rootDir = resolvePackageRoot();
+    const builder = new InspectableWorkflowBundleBuilder({
+      agentName: "test-agent",
+      appRoot: "/tmp/eve-app",
+      compiledArtifactsBootstrapPath: "/tmp/compiled-artifacts-bootstrap.js",
+      outDir: "/tmp/eve-workflows",
+      rootDir,
+      watch: false,
+    });
+
+    await expect(builder.discoveredEntries()).resolves.toMatchObject({
+      discoveredSteps: expect.arrayContaining([
+        resolvePackageSourceFilePath("src/execution/record-host-runtime-acceptance-step.ts"),
+      ]),
+    });
   });
 
   it("writes a Nitro-owned step registration entry", async () => {

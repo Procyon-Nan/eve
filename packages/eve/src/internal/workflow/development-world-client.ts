@@ -90,6 +90,10 @@ export function createDevelopmentWorkflowWorld(): World {
   const forwarded = buildForwardedOperations();
   const world = {
     specVersion: 6 as SpecVersion,
+    capabilities: {
+      hookRetention: { active: true },
+      hookResumeDedup: true,
+    },
     async getDeploymentId() {
       // Inside a pinned delivery, steps and child runs must record the
       // delivery's generation — not whatever is active — so replay after a

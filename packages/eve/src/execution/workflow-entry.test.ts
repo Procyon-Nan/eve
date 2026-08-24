@@ -22,12 +22,12 @@ import { terminateChildSessionsStep } from "#execution/terminate-child-sessions-
 import type { TurnControlPayload } from "#execution/turn-control-protocol.js";
 import { workflowEntry } from "#execution/workflow-entry.js";
 import { routeDeliverToChildren } from "#execution/route-child-delivery.js";
+import { recordHostRuntimeAcceptanceStep } from "#execution/record-host-runtime-acceptance-step.js";
 import { settleCancelledTurnStep } from "#execution/settle-cancelled-turn-step.js";
 import { emitTerminalSessionFailureStep } from "#execution/terminal-session-failure-step.js";
 import type { SessionInboxPayload } from "#execution/session-command-inbox.js";
 import { sessionCommandHookToken } from "#execution/session-command-token.js";
 import { encodeSessionCommandV2 } from "#execution/wire/session-inbox-wire.v2.js";
-import { recordHostRuntimeAcceptanceStep } from "#runtime/host-runtime/acceptance.js";
 
 vi.mock("#compiled/@workflow/core/index.js", () => ({
   createHook: vi.fn(),
@@ -48,7 +48,7 @@ vi.mock("#compiled/@workflow/core/runtime.js", () => ({
   resumeHook: vi.fn(),
 }));
 
-vi.mock("#runtime/host-runtime/acceptance.js", () => ({
+vi.mock("#execution/record-host-runtime-acceptance-step.js", () => ({
   recordHostRuntimeAcceptanceStep: vi.fn().mockResolvedValue(undefined),
 }));
 
