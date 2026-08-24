@@ -1,5 +1,11 @@
 # eve
 
+## 0.40.0-baigong.1
+
+### Patch Changes
+
+- Keep Host Runtime acceptance available in local development and production builds by preserving the local Workflow World capability contract and registering the acceptance receipt step in every deployment.
+
 ## 0.40.0-baigong.0
 
 ### Patch Changes
