@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentInfoResult } from "#client/index.js";
+import { eveVersionTag } from "#cli/banner.js";
 import type { LogRecord } from "#internal/logging.js";
 import type { DevDiagnostics } from "../diagnostics.js";
 import { searchActionValue } from "#setup/cli/select-state.js";
@@ -182,7 +183,7 @@ describe("TerminalRenderer (inline scrollback)", () => {
     renderer.shutdown();
 
     const lines = screen.snapshot().trimEnd().split("\n");
-    expect(lines.at(-1)).toMatch(/^☰eve {2}v\d+\.\d+\.\d+ · session ses_0123456789$/u);
+    expect(lines.at(-1)).toBe(`${eveVersionTag()} · session ses_0123456789`);
 
     // Repeated reports keep the latest id; a renderer that never received
     // one prints the bare tag.
