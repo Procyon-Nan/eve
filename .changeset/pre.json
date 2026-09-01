@@ -47,6 +47,7 @@
     "quiet-sandbox-opt-out",
     "steady-conversation-recovery",
     "steady-subagent-invocation",
+    "trusted-host-runtime-attachments",
     "trusted-host-runtime-snapshots",
     "warm-subagents-delegate"
   ]
