@@ -18,6 +18,7 @@ import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
 import { normalizeEveAttributes } from "#runtime/attributes/normalize.js";
 import { beginHostRuntimeAcceptance } from "#runtime/host-runtime/acceptance.js";
 import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { hostRuntimeFile } from "#public/attachments/index.js";
 import { ROOT_COMPILED_AGENT_NODE_ID } from "#compiler/manifest.js";
 import { ConnectionAuthorizationRequiredError } from "#public/connections/errors.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
@@ -1342,6 +1343,61 @@ describe("workflowEntry integration", () => {
               sessionId: run.runId,
             },
           ]);
+      } finally {
+        stream.dispose();
+        await run.cancel();
+      }
+    });
+  });
+
+  it("settles a deterministic root attachment failure and keeps the session waiting", async () => {
+    const runtime = createTestRuntime({
+      agent: { name: "workflow-entry-host-attachment-failure" },
+    });
+    runtime.session.hostRuntimeProviders.set("baigong-agent", {
+      providerKind: "baigong-agent",
+      async resolve() {
+        return {
+          model: new MockLanguageModelV3({ modelId: "host-model", provider: "host" }),
+          modelId: "host-model",
+        };
+      },
+      async resolveAttachment() {
+        throw new HostRuntimeError("HOST_RUNTIME_ATTACHMENT_UNAVAILABLE");
+      },
+    });
+    const hostRuntime = {
+      acceptanceKey: "integration-attachment-failed",
+      ownership: "root" as const,
+      reference: { providerKind: "baigong-agent", value: "opaque-attachment-failed" },
+    };
+
+    await runtime.run(async () => {
+      await beginHostRuntimeAcceptance(hostRuntime.acceptanceKey);
+      const run = await start(workflowEntry, [
+        {
+          hostRuntime,
+          input: {
+            message: [
+              hostRuntimeFile({
+                filename: "deleted.png",
+                mediaType: "image/png",
+                size: 4,
+                value: "deleted-file",
+              }),
+            ],
+          },
+          serializedContext: buildSerializedContext({ channelKind: "http", mode: "conversation" }),
+        },
+      ]);
+      const stream = captureTurnEvents(run);
+
+      try {
+        const events = await stream.nextTurn();
+        expect(events.at(-1)?.type).toBe("session.waiting");
+        expect(filterEventsByType(events, "step.failed")[0]?.data).toMatchObject({
+          code: "HOST_RUNTIME_ATTACHMENT_UNAVAILABLE",
+        });
       } finally {
         stream.dispose();
         await run.cancel();

@@ -10,12 +10,17 @@ import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextContainer, contextStorage } from "#context/container.js";
-import { SandboxKey, SessionIdKey, SessionKey } from "#context/keys.js";
+import { HostRuntimeContextKey, SandboxKey, SessionIdKey, SessionKey } from "#context/keys.js";
 import { dispatchDynamicToolEvent } from "#context/dynamic-tool-lifecycle.js";
 import { createToolLoopHarness } from "#harness/tool-loop.js";
 import type { HarnessSession, ToolLoopHarnessConfig } from "#harness/types.js";
 import { createTurnStartedEvent, type UnstampedMessageStreamEvent } from "#protocol/message.js";
 import { defineTool } from "#public/definitions/tool.js";
+import { hostRuntimeFile } from "#public/attachments/index.js";
+import { toolOutputPart } from "#public/tools/output-builders.js";
+import { registerHostRuntimeProvider } from "#runtime/host-runtime/provider.js";
+import { HostRuntimeError } from "#runtime/host-runtime/errors.js";
+import { createRuntimeSession, withRuntimeSession } from "#runtime/sessions/runtime-session.js";
 import type { ResolvedDynamicToolResolver } from "#runtime/types.js";
 
 const usage = {
@@ -33,6 +38,21 @@ const usage = {
 };
 
 function createModel(): MockLanguageModelV4 {
+  const streamResult = () => ({
+    stream: simulateReadableStream({
+      chunks: [
+        { type: "stream-start" as const, warnings: [] },
+        { id: "answer", type: "text-start" as const },
+        { delta: "ok", id: "answer", type: "text-delta" as const },
+        { id: "answer", type: "text-end" as const },
+        {
+          finishReason: { raw: undefined, unified: "stop" as const },
+          type: "finish" as const,
+          usage,
+        },
+      ],
+    }),
+  });
   return new MockLanguageModelV4({
     doGenerate: {
       content: [{ text: "ok", type: "text" }],
@@ -40,17 +60,7 @@ function createModel(): MockLanguageModelV4 {
       usage,
       warnings: [],
     },
-    doStream: {
-      stream: simulateReadableStream({
-        chunks: [
-          { type: "stream-start", warnings: [] },
-          { id: "answer", type: "text-start" },
-          { delta: "ok", id: "answer", type: "text-delta" },
-          { id: "answer", type: "text-end" },
-          { finishReason: { raw: undefined, unified: "stop" }, type: "finish", usage },
-        ],
-      }),
-    },
+    doStream: [streamResult(), streamResult()],
     modelId: "multimodal-test-model",
     provider: "eve-integration-mock",
   });
@@ -137,6 +147,252 @@ function sha256(data: unknown): string {
 }
 
 describe("tool loop multimodal inputs (real AI SDK)", () => {
+  it("hydrates a host-runtime user file for each model call without persisting bytes", async () => {
+    const bytes = Buffer.from("trusted-user-file", "utf8");
+    const base64 = bytes.toString("base64");
+    const file = hostRuntimeFile({
+      filename: "trusted.png",
+      mediaType: "image/png",
+      size: bytes.byteLength,
+      value: "file_user_1",
+    });
+    const model = createModel();
+    const events: UnstampedMessageStreamEvent[] = [];
+    const get = vi.fn(async () => null);
+    const ctx = disabledSandboxContext(get);
+    const reference = { providerKind: "baigong-agent", value: "runtime-root" } as const;
+    ctx.set(SessionIdKey, "multimodal-test-session");
+    ctx.set(HostRuntimeContextKey, {
+      acceptanceKey: "command-user-file",
+      ownership: "root",
+      reference,
+    });
+    const resolveAttachment = vi.fn(async () => bytes);
+    const runtimeSession = createRuntimeSession("user-host-attachment");
+    const harness = createToolLoopHarness(createConfig(model, events));
+
+    const result = await withRuntimeSession(runtimeSession, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model, modelId: model.modelId })),
+        resolveAttachment,
+      });
+      return await contextStorage.run(ctx, async () => {
+        const first = await harness(createSession(), {
+          message: [{ text: "Inspect this file.", type: "text" }, file],
+        });
+        return await harness(first.session, { message: "Inspect it again." });
+      });
+    });
+
+    expect(resolveAttachment).toHaveBeenCalledTimes(2);
+    expect(get).not.toHaveBeenCalled();
+    expect(model.doStreamCalls).toHaveLength(2);
+    for (const call of model.doStreamCalls) {
+      const files = fileParts((call.prompt ?? []) as ModelMessage[]);
+      expect(files).toHaveLength(1);
+      expect(sha256(files[0]?.data)).toBe(sha256(bytes));
+    }
+    const durable = JSON.stringify(result.session.history);
+    expect(durable).toContain("eve-attachment:");
+    expect(durable).not.toContain(base64);
+    const received = events.find((event) => event.type === "message.received");
+    expect(JSON.stringify(received)).not.toContain("file_user_1");
+    expect(JSON.stringify(received)).not.toContain(base64);
+  });
+
+  it("does not retry a deterministic host-runtime attachment failure", async () => {
+    const file = hostRuntimeFile({
+      mediaType: "image/png",
+      size: 4,
+      value: "deleted-file",
+    });
+    const model = createModel();
+    const reference = { providerKind: "baigong-agent", value: "runtime-root" } as const;
+    const ctx = disabledSandboxContext(vi.fn(async () => null));
+    ctx.set(SessionIdKey, "multimodal-test-session");
+    ctx.set(HostRuntimeContextKey, {
+      acceptanceKey: "command-deleted-file",
+      ownership: "root",
+      reference,
+    });
+    const resolveAttachment = vi.fn(async () => {
+      throw new HostRuntimeError("HOST_RUNTIME_ATTACHMENT_UNAVAILABLE");
+    });
+    const runtimeSession = createRuntimeSession("unavailable-host-attachment");
+
+    await expect(
+      withRuntimeSession(runtimeSession, async () => {
+        registerHostRuntimeProvider({
+          providerKind: reference.providerKind,
+          resolve: vi.fn(async () => ({ model, modelId: model.modelId })),
+          resolveAttachment,
+        });
+        return await contextStorage.run(ctx, async () =>
+          createToolLoopHarness(createConfig(model, []))(createSession(), { message: [file] }),
+        );
+      }),
+    ).rejects.toMatchObject({ code: "HOST_RUNTIME_ATTACHMENT_UNAVAILABLE" });
+
+    expect(resolveAttachment).toHaveBeenCalledOnce();
+    expect(model.doStreamCalls).toHaveLength(0);
+  });
+
+  it.each(["generate", "stream"] as const)(
+    "restores a host-runtime Tool file to a reference before durable history on the $branch path",
+    async (branch) => {
+      const bytes = Buffer.from("trusted-tool-file", "utf8");
+      const base64 = bytes.toString("base64");
+      const reference = { providerKind: "baigong-agent", value: "runtime-root" } as const;
+      const resolveAttachment = vi.fn(async () => bytes);
+      const ctx = disabledSandboxContext(vi.fn(async () => null));
+      ctx.set(SessionIdKey, "dynamic-host-attachment-session");
+      ctx.set(SessionKey, {
+        auth: { current: null, initiator: null },
+        sessionId: "dynamic-host-attachment-session",
+        turn: { id: "dynamic-host-attachment-turn", sequence: 0 },
+      });
+      ctx.set(HostRuntimeContextKey, {
+        acceptanceKey: "command-tool-file",
+        ownership: "root",
+        reference,
+      });
+      const toolCall = {
+        input: "{}",
+        toolCallId: "call-read-host-attachment",
+        toolName: "read_host_attachment",
+        type: "tool-call" as const,
+      };
+      const model = contextStorage.run(
+        ctx,
+        () =>
+          new MockLanguageModelV4({
+            doGenerate: [
+              {
+                content: [toolCall],
+                finishReason: { raw: undefined, unified: "tool-calls" as const },
+                usage,
+                warnings: [],
+              },
+              {
+                content: [{ text: "I inspected the attachment.", type: "text" as const }],
+                finishReason: { raw: undefined, unified: "stop" as const },
+                usage,
+                warnings: [],
+              },
+            ],
+            doStream: [
+              {
+                stream: simulateReadableStream({
+                  chunks: [
+                    { type: "stream-start", warnings: [] },
+                    toolCall,
+                    {
+                      finishReason: { raw: undefined, unified: "tool-calls" },
+                      type: "finish",
+                      usage,
+                    },
+                  ],
+                }),
+              },
+              {
+                stream: simulateReadableStream({
+                  chunks: [
+                    { type: "stream-start", warnings: [] },
+                    { id: "answer", type: "text-start" },
+                    {
+                      delta: "I inspected the attachment.",
+                      id: "answer",
+                      type: "text-delta",
+                    },
+                    { id: "answer", type: "text-end" },
+                    { finishReason: { raw: undefined, unified: "stop" }, type: "finish", usage },
+                  ],
+                }),
+              },
+            ],
+            modelId: "dynamic-host-attachment-model",
+            provider: "eve-integration-mock",
+          }),
+      );
+      const resolver: ResolvedDynamicToolResolver = {
+        eventNames: ["turn.started"],
+        events: {
+          "turn.started": () => ({
+            read_host_attachment: defineTool({
+              description: "Read a host attachment.",
+              inputSchema: { additionalProperties: false, type: "object" },
+              execute: async () => ({
+                filename: "tool.png",
+                mediaType: "image/png",
+                size: bytes.byteLength,
+                value: "file_tool_1",
+              }),
+              toModelOutput: (output) => ({
+                type: "content",
+                value: [toolOutputPart.hostRuntimeFile(output)],
+              }),
+            }),
+          }),
+        },
+        logicalPath: "agent/tools/capabilities.ts",
+        slug: "capabilities",
+        sourceId: "integration:dynamic-host-attachment",
+        sourceKind: "module",
+      };
+      await dispatchDynamicToolEvent({
+        ctx,
+        resolvers: [resolver],
+        event: createTurnStartedEvent({ sequence: 0, turnId: "dynamic-host-attachment-turn" }),
+        messages: [],
+      });
+      ctx.clearVirtualContext();
+      const baseSession = createSession();
+      const session: HarnessSession = {
+        ...baseSession,
+        agent: {
+          ...baseSession.agent,
+          modelReference: { id: model.modelId },
+        },
+      };
+      const runtimeSession = createRuntimeSession("tool-host-attachment");
+
+      const events: UnstampedMessageStreamEvent[] | undefined =
+        branch === "stream" ? [] : undefined;
+      const second = await withRuntimeSession(runtimeSession, async () => {
+        registerHostRuntimeProvider({
+          providerKind: reference.providerKind,
+          resolve: vi.fn(async () => ({ model, modelId: model.modelId })),
+          resolveAttachment,
+        });
+        return await contextStorage.run(ctx, async () => {
+          const first = await createToolLoopHarness(createConfig(model, events))(session, {
+            message: "Inspect the saved attachment.",
+          });
+          if (typeof first.next !== "function") {
+            throw new TypeError("Expected the Tool call to continue the tool loop.");
+          }
+          return await first.next(first.session);
+        });
+      });
+
+      expect(resolveAttachment).toHaveBeenCalledTimes(2);
+      const modelCalls = branch === "stream" ? model.doStreamCalls : model.doGenerateCalls;
+      expect(modelCalls).toHaveLength(2);
+      const secondPrompt = (modelCalls[1]?.prompt ?? []) as ModelMessage[];
+      expect(sha256(fileParts(secondPrompt)[0]?.data)).toBe(sha256(bytes));
+      const durable = JSON.stringify(second.session.history);
+      expect(durable).toContain("eve-attachment:");
+      expect(durable).not.toContain(base64);
+      expect(durable).not.toContain("AQID");
+      if (events !== undefined) {
+        const actionResult = events.find((event) => event.type === "action.result");
+        expect(JSON.stringify(actionResult)).toContain("file_tool_1");
+        expect(JSON.stringify(actionResult)).not.toContain(base64);
+      }
+    },
+  );
+
   it("sends a roughly 3 MiB disabled-sandbox image on the first stream call without compaction", async () => {
     const bytes = Buffer.alloc(2_927_949, 0xa5);
     const content: UserContent = [

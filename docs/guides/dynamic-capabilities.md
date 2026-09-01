@@ -149,6 +149,9 @@ registerHostRuntimeProvider({
   async resolve({ reference, sessionId, parent }) {
     return hostRuntimeStore.resolve(reference.value, { parent, sessionId });
   },
+  async resolveAttachment({ value, sessionId, parent, signal }) {
+    return hostRuntimeStore.readAttachment(value, { parent, sessionId, signal });
+  },
   async createSpecialistReference(input) {
     return hostRuntimeStore.createSpecialistReference(input);
   },
@@ -165,6 +168,14 @@ The resolved values stay in the current preflight scope; eve never serializes
 the model, tool implementations, instructions, or provider errors. Make
 `resolve` idempotent because a workflow retry or cold recovery can resolve the
 same durable reference again.
+
+`resolveAttachment` is optional unless a durable message contains a file from
+`hostRuntimeFile()`. eve calls it immediately before each model request with
+the current durable runtime reference, session ID, specialist parent lineage,
+and turn cancellation signal. The provider must authorize that complete
+context and return a `Uint8Array` whose length matches the reference's declared
+size. Do not put credentials, filesystem paths, tokens, or signed URLs in the
+file reference value.
 
 Author the root slots as consumers of the resolved snapshot:
 
@@ -221,6 +232,28 @@ does not enter auth attributes, client context, request JSON, model messages,
 or public events. See the
 [TypeScript API reference](../reference/typescript-api#the-define-helpers) for
 the provider lifecycle and acceptance probe.
+
+Trusted server code creates a durable file reference with `hostRuntimeFile`
+instead of reading the file into the request:
+
+```ts
+import { hostRuntimeFile } from "eve/attachments";
+
+const attachment = hostRuntimeFile({
+  value: "attachment_01JXYZ",
+  mediaType: "image/png",
+  filename: "chart.png",
+  size: 184_320,
+});
+```
+
+The built-in eve channel accepts this reserved reference only when the same
+authenticated request carries a `withHostRuntime(...)` handoff. eve stores the
+reference and display metadata, not the bytes. Root agents and specialists
+resolve the file through their own current runtime reference and lineage. A
+later model call reads it again; eve does not cache the result or copy it into
+the sandbox. Deleted files and denied access therefore fail closed instead of
+falling back to historical bytes.
 
 ## Dynamic tools
 

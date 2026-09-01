@@ -7,6 +7,10 @@
  */
 
 import { isAttachmentRefUrl, parseAttachmentRef } from "#internal/attachments/refs.js";
+import {
+  isHostRuntimeAttachmentFilePart,
+  parseHostRuntimeFilePart,
+} from "#internal/attachments/host-runtime-refs.js";
 
 /**
  * Converts any inline AI SDK `FilePart.data` value into raw bytes.
@@ -78,6 +82,15 @@ export function getKnownByteLength(data: unknown): number | null {
   }
 
   return null;
+}
+
+/** Returns the declared size for a complete host-runtime FilePart without reading bytes. */
+export function getKnownFilePartByteLength(part: unknown): number | null {
+  return isHostRuntimeAttachmentFilePart(part)
+    ? parseHostRuntimeFilePart(part).size
+    : part !== null && typeof part === "object" && "data" in part
+      ? getKnownByteLength(part.data)
+      : null;
 }
 
 function decodeStringData(value: string): Buffer | null {

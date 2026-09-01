@@ -8,6 +8,8 @@ export {
   type DynamicSubagentDefinition,
   type HostRuntimeAcceptanceStatus,
   type HostRuntimeAgentDefinition,
+  type HostRuntimeAttachment,
+  type HostRuntimeAttachmentResolveInput,
   type HostRuntimeDefinition,
   type HostRuntimeErrorCode,
   type HostRuntimeParentLineage,

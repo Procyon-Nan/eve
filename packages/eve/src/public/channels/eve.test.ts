@@ -22,6 +22,8 @@ import {
 } from "#context/keys.js";
 import { createMessageCompletedEvent } from "#protocol/message.js";
 import { withHostRuntime } from "#runtime/host-runtime/trusted-auth.js";
+import { hostRuntimeFile } from "#public/attachments/index.js";
+import type { HostRuntimeAttachmentFilePart } from "#shared/host-runtime.js";
 import {
   HostRuntimeAcceptanceIndeterminateError,
   beginHostRuntimeAcceptance,
@@ -1036,6 +1038,49 @@ describe("eveChannel — host runtime handoff", () => {
     expect(JSON.stringify(auth)).not.toContain(reference.value);
     expect(beginHostRuntimeAcceptance).toHaveBeenCalledWith("command-create-1");
     expect(recordHostRuntimeAcceptance).toHaveBeenCalledWith("command-create-1", "ACCEPTED");
+  });
+
+  it("accepts a reserved attachment reference only with the trusted handoff", async () => {
+    const file = hostRuntimeFile({
+      filename: "diagram.png",
+      mediaType: "image/png",
+      size: 4,
+      value: "file_123",
+    }) as HostRuntimeAttachmentFilePart;
+    const trusted = createEveCreateHandler({
+      auth: () =>
+        withHostRuntime(ACCEPTED_AUTH, {
+          acceptanceKey: "command-attachment-1",
+          reference,
+        }),
+    });
+    const accepted = await trusted.fetch(createJsonMessageRequest({ message: [file] }));
+
+    expect(accepted.status).toBe(202);
+    expect(trusted.send).toHaveBeenCalledWith(
+      [file],
+      expect.objectContaining({ hostRuntime: expect.objectContaining({ reference }) }),
+    );
+
+    const malformed = {
+      ...file,
+      data: {
+        ...file.data,
+        reference: {
+          ...file.data.reference,
+          extra: "must-not-survive",
+        },
+      },
+    };
+    const malformedResponse = await trusted.fetch(
+      createJsonMessageRequest({ message: [malformed] }),
+    );
+    expect(malformedResponse.status).toBe(400);
+
+    const untrusted = createEveCreateHandler({ auth: () => ACCEPTED_AUTH });
+    const rejected = await untrusted.fetch(createJsonMessageRequest({ message: [file] }));
+    expect(rejected.status).toBe(400);
+    expect(untrusted.send).not.toHaveBeenCalled();
   });
 
   it("carries distinct references through existing-session send and respond commands", async () => {

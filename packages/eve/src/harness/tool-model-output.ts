@@ -6,6 +6,11 @@ import { parseJsonValue, type JsonValue } from "#shared/json.js";
 import type { ToolModelOutputPart } from "#shared/tool-definition.js";
 import { formatValidationError } from "#runtime/validation.js";
 import { withToolOutputSerializationError } from "#harness/tool-output-serialization.js";
+import {
+  HOST_RUNTIME_ATTACHMENT_REFERENCE_KEY,
+  isHostRuntimeAttachmentFilePart,
+  parseHostRuntimeFilePart,
+} from "#internal/attachments/host-runtime-refs.js";
 
 /**
  * A validated {@link ToolModelOutput} in the AI SDK's expected shape:
@@ -28,13 +33,19 @@ const log = createLogger("harness.tool-model-output");
 const CONTENT_FILE_WARN_BYTES = 3 * 1024 * 1024;
 
 /** File-data tags the AI SDK accepts but eve does not support yet. */
-const UNSUPPORTED_FILE_DATA_TAGS = new Set(["url", "reference", "text"]);
+const UNSUPPORTED_FILE_DATA_TAGS = new Set(["url", "text"]);
 
 const toolModelOutputPartSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
     type: z.literal("file"),
-    data: z.object({ type: z.literal("data"), data: z.string() }),
+    data: z.union([
+      z.object({ type: z.literal("data"), data: z.string() }),
+      z.object({
+        type: z.literal("reference"),
+        reference: z.object({ [HOST_RUNTIME_ATTACHMENT_REFERENCE_KEY]: z.string() }),
+      }),
+    ]),
     mediaType: z.string().min(1),
     filename: z.string().optional(),
   }),
@@ -104,10 +115,14 @@ export function normalizeToolModelOutput(input: {
       }
       if (output.type === "content") {
         for (const part of output.value) {
-          if (part.type === "file") {
-            warnOversizedFilePayload(part, input.toolName);
+          if (part.type === "file" && part.data.type === "data") {
+            warnOversizedFilePayload(
+              part as { readonly data: { readonly data: string }; readonly mediaType: string },
+              input.toolName,
+            );
           }
         }
+        return { type: "content", value: output.value as ToolModelOutputPart[] };
       }
       return output;
     },
@@ -133,6 +148,11 @@ function assertSupportedFilePartData(output: unknown): void {
     const filePart = part as { readonly type?: unknown; readonly data?: unknown };
     if (filePart.type !== "file") continue;
 
+    if (isHostRuntimeAttachmentFilePart(filePart)) {
+      parseHostRuntimeFilePart(filePart);
+      continue;
+    }
+
     const data = filePart.data;
     const taggedPayload =
       data !== null && typeof data === "object"
@@ -149,6 +169,11 @@ function assertSupportedFilePartData(output: unknown): void {
       data !== null && typeof data === "object"
         ? (data as { readonly type?: unknown }).type
         : undefined;
+    if (tag === "reference") {
+      throw new TypeError(
+        `File content part data tag "${tag}" is reserved for eve host-runtime references.`,
+      );
+    }
     if (typeof tag === "string" && UNSUPPORTED_FILE_DATA_TAGS.has(tag)) {
       throw new TypeError(
         `File content part data tag "${tag}" is not supported yet; ` +

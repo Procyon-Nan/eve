@@ -1,7 +1,7 @@
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 
-import { ContextContainer } from "#context/container.js";
+import { contextStorage, ContextContainer } from "#context/container.js";
 import {
   AuthKey,
   HostRuntimeContextKey,
@@ -13,6 +13,8 @@ import {
 } from "#context/keys.js";
 import { buildResolveContext } from "#context/dynamic-resolve-context.js";
 import { defineHostRuntime } from "#public/definitions/agent.js";
+import { hostRuntimeFile } from "#public/attachments/index.js";
+import { resolveHostRuntimeAttachment } from "#runtime/host-runtime/attachments.js";
 import { HostRuntimeError, isHostRuntimeError } from "#runtime/host-runtime/errors.js";
 import {
   prepareHostRuntimePreflight,
@@ -187,6 +189,185 @@ describe("host runtime registration", () => {
       unregister();
       expect(session.hostRuntimeProviders.get(reference.providerKind)).toBe(replacement);
     });
+  });
+});
+
+describe("host runtime attachments", () => {
+  function createAttachmentContext(ownership: "root" | "specialist" = "root"): ContextContainer {
+    const ctx = new ContextContainer();
+    ctx.set(SessionIdKey, ownership === "root" ? "session-root" : "session-specialist");
+    const hostRuntime: import("#shared/host-runtime.js").DurableHostRuntimeContext = {
+      ownership,
+      reference,
+    };
+    if (ownership === "root") {
+      Object.assign(hostRuntime, { acceptanceKey: "command-1" });
+    } else {
+      Object.assign(hostRuntime, { parent: lineage });
+    }
+    ctx.set(HostRuntimeContextKey, hostRuntime);
+    return ctx;
+  }
+
+  const part = hostRuntimeFile({
+    filename: "diagram.png",
+    mediaType: "image/png",
+    size: 4,
+    value: "file_123",
+  });
+
+  it.each(["root", "specialist"] as const)(
+    "resolves bytes with the current %s reference and lineage",
+    async (ownership) => {
+      const session = createRuntimeSession(`attachment-${ownership}`);
+      const resolveAttachment = vi.fn(async () => new Uint8Array([1, 2, 3, 4]));
+      const signal = new AbortController().signal;
+
+      await withRuntimeSession(session, async () => {
+        registerHostRuntimeProvider({
+          providerKind: reference.providerKind,
+          resolve: vi.fn(async () => ({ model: createModel(), modelId: "host-model" })),
+          resolveAttachment,
+        });
+        const bytes = await contextStorage.run(createAttachmentContext(ownership), async () =>
+          resolveHostRuntimeAttachment(part, signal),
+        );
+        expect(bytes).toEqual(new Uint8Array([1, 2, 3, 4]));
+      });
+
+      const expected: import("#shared/host-runtime.js").HostRuntimeAttachmentResolveInput = {
+        filename: "diagram.png",
+        mediaType: "image/png",
+        reference,
+        sessionId: ownership === "root" ? "session-root" : "session-specialist",
+        signal,
+        size: 4,
+        value: "file_123",
+      };
+      if (ownership === "specialist") Object.assign(expected, { parent: lineage });
+      expect(resolveAttachment).toHaveBeenCalledExactlyOnceWith(expected);
+    },
+  );
+
+  it("fails closed when the resolver is missing or returns a different byte length", async () => {
+    const session = createRuntimeSession("attachment-failures");
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model: createModel(), modelId: "host-model" })),
+      });
+      await expect(
+        contextStorage.run(createAttachmentContext(), async () =>
+          resolveHostRuntimeAttachment(part, new AbortController().signal),
+        ),
+      ).rejects.toMatchObject({ code: "HOST_RUNTIME_ATTACHMENT_RESOLVER_UNAVAILABLE" });
+
+      session.hostRuntimeProviders.set(reference.providerKind, {
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model: createModel(), modelId: "host-model" })),
+        resolveAttachment: vi.fn(async () => new Uint8Array([1, 2, 3])),
+      });
+      await expect(
+        contextStorage.run(createAttachmentContext(), async () =>
+          resolveHostRuntimeAttachment(part, new AbortController().signal),
+        ),
+      ).rejects.toMatchObject({ code: "HOST_RUNTIME_ATTACHMENT_RESOLUTION_FAILED" });
+    });
+  });
+
+  it("fails closed without a trusted context or registered provider", async () => {
+    const session = createRuntimeSession("attachment-missing-runtime");
+
+    await withRuntimeSession(session, async () => {
+      const missingContext = new ContextContainer();
+      missingContext.set(SessionIdKey, "session-root");
+      await expect(
+        contextStorage.run(missingContext, async () =>
+          resolveHostRuntimeAttachment(part, new AbortController().signal),
+        ),
+      ).rejects.toMatchObject({ code: "HOST_RUNTIME_ATTACHMENT_RESOLVER_UNAVAILABLE" });
+
+      await expect(
+        contextStorage.run(createAttachmentContext(), async () =>
+          resolveHostRuntimeAttachment(part, new AbortController().signal),
+        ),
+      ).rejects.toMatchObject({ code: "HOST_RUNTIME_PROVIDER_NOT_REGISTERED" });
+    });
+  });
+
+  it("preserves unavailable errors without a fallback read", async () => {
+    const session = createRuntimeSession("attachment-errors");
+    const unavailable = new HostRuntimeError("HOST_RUNTIME_ATTACHMENT_UNAVAILABLE");
+    const resolveAttachment = vi.fn(async () => {
+      throw unavailable;
+    });
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model: createModel(), modelId: "host-model" })),
+        resolveAttachment,
+      });
+      await expect(
+        contextStorage.run(createAttachmentContext(), async () =>
+          resolveHostRuntimeAttachment(part, new AbortController().signal),
+        ),
+      ).rejects.toBe(unavailable);
+    });
+    expect(resolveAttachment).toHaveBeenCalledOnce();
+  });
+
+  it("does not call the resolver when the turn is already cancelled", async () => {
+    const session = createRuntimeSession("attachment-pre-cancelled");
+    const resolveAttachment = vi.fn(async () => new Uint8Array([1, 2, 3, 4]));
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancelled", "AbortError");
+    controller.abort(cancellation);
+
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model: createModel(), modelId: "host-model" })),
+        resolveAttachment,
+      });
+      await expect(
+        contextStorage.run(createAttachmentContext(), async () =>
+          resolveHostRuntimeAttachment(part, controller.signal),
+        ),
+      ).rejects.toBe(cancellation);
+    });
+
+    expect(resolveAttachment).not.toHaveBeenCalled();
+  });
+
+  it("forwards in-flight cancellation to the resolver", async () => {
+    const session = createRuntimeSession("attachment-in-flight-cancellation");
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancelled", "AbortError");
+    const started = Promise.withResolvers<void>();
+    const resolveAttachment = vi.fn(
+      async (input: import("#shared/host-runtime.js").HostRuntimeAttachmentResolveInput) =>
+        await new Promise<Uint8Array>((_resolve, reject) => {
+          expect(input.signal).toBe(controller.signal);
+          started.resolve();
+          input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
+        }),
+    );
+
+    await withRuntimeSession(session, async () => {
+      registerHostRuntimeProvider({
+        providerKind: reference.providerKind,
+        resolve: vi.fn(async () => ({ model: createModel(), modelId: "host-model" })),
+        resolveAttachment,
+      });
+      const pending = contextStorage.run(createAttachmentContext(), async () =>
+        resolveHostRuntimeAttachment(part, controller.signal),
+      );
+      await started.promise;
+      controller.abort(cancellation);
+      await expect(pending).rejects.toBe(cancellation);
+    });
+
+    expect(resolveAttachment).toHaveBeenCalledOnce();
   });
 });
 

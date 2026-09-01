@@ -6,6 +6,7 @@ import type { DynamicToolSet } from "#shared/dynamic-tool-definition.js";
 export const HOST_RUNTIME_DEFINITION_KIND = "eve.host-runtime" as const;
 export const HOST_RUNTIME_ACCEPTANCE_ATTRIBUTE = "$eve.host_runtime_acceptance";
 export const HOST_RUNTIME_ACCEPTANCE_STATUS_ATTRIBUTE = "$eve.host_runtime_acceptance_status";
+export const HOST_RUNTIME_ATTACHMENT_REFERENCE_KEY = "eve.host-runtime" as const;
 
 /** Durable opaque reference to a host-owned runtime snapshot. */
 export interface HostRuntimeReference {
@@ -32,6 +33,36 @@ export interface HostRuntimeResolveInput {
   readonly reference: HostRuntimeReference;
   readonly sessionId: string;
   readonly parent?: HostRuntimeParentLineage;
+}
+
+/** Host-owned file metadata persisted without the file bytes. */
+export interface HostRuntimeAttachment {
+  readonly value: string;
+  readonly mediaType: string;
+  readonly filename?: string;
+  readonly size: number;
+}
+
+/** Durable AI SDK file-part shape reserved for host-runtime attachments. */
+export interface HostRuntimeAttachmentFilePart {
+  readonly type: "file";
+  readonly data: {
+    readonly type: "reference";
+    readonly reference: {
+      readonly [HOST_RUNTIME_ATTACHMENT_REFERENCE_KEY]: string;
+    };
+  };
+  readonly mediaType: string;
+  readonly filename?: string;
+}
+
+/** Input passed to the active host-runtime provider for one transient file read. */
+export interface HostRuntimeAttachmentResolveInput extends HostRuntimeResolveInput {
+  readonly value: string;
+  readonly mediaType: string;
+  readonly filename?: string;
+  readonly size: number;
+  readonly signal: AbortSignal;
 }
 
 export interface SpecialistReferenceFactoryInput {
@@ -63,6 +94,7 @@ export type HostRuntimeReleaseInput = HostRuntimeResolveInput & {
 export interface HostRuntimeProvider {
   readonly providerKind: string;
   resolve(input: HostRuntimeResolveInput): Promise<ResolvedHostRuntime>;
+  resolveAttachment?(input: HostRuntimeAttachmentResolveInput): Promise<Uint8Array>;
   createSpecialistReference?(input: SpecialistReferenceFactoryInput): Promise<HostRuntimeReference>;
   release?(input: HostRuntimeReleaseInput): Promise<void>;
 }

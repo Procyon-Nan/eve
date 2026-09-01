@@ -20,6 +20,7 @@ export {
   type ToolModelOutputPart,
 } from "#public/definitions/tool.js";
 export { toolOutput, toolOutputPart } from "#public/tools/output-builders.js";
+export type { HostRuntimeAttachment } from "#shared/host-runtime.js";
 export type {
   Approval,
   ApprovalConfiguration,

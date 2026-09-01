@@ -16,6 +16,11 @@ import { resolveForwardedPrincipal, type TrustedForwarders } from "#channel/forw
 import { parseSessionCallback } from "#channel/session-callback.js";
 import { isRuntimeSessionOwnershipConflictError } from "#execution/runtime-errors.js";
 import { hasInternalRefScheme } from "#internal/attachments/url-refs.js";
+import {
+  createHostRuntimeFilePart,
+  isHostRuntimeAttachmentFilePart,
+  parseHostRuntimeFilePart,
+} from "#internal/attachments/host-runtime-refs.js";
 import { createLogger, logError } from "#internal/logging.js";
 import {
   readAgentInfoRouteResponse,
@@ -301,7 +306,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         });
         if (forwarded instanceof Response) return await rejectHostRuntime(hostRuntime, forwarded);
 
-        const body = parseCreateBody(payload);
+        const body = parseCreateBody(payload, hostRuntime !== undefined);
         if (body instanceof Response) return await rejectHostRuntime(hostRuntime, body);
         // Top-level sessions own their trace. Callback sessions are delegated
         // remote agents and intentionally continue the dispatching agent trace.
@@ -434,7 +439,7 @@ export function eveChannel(input: EveChannelInput): EveChannel {
         if (sessionId instanceof Response) return await rejectHostRuntime(hostRuntime, sessionId);
         const payload = await parseJsonRequest(req);
         if (payload instanceof Response) return await rejectHostRuntime(hostRuntime, payload);
-        const body = parseSessionMessageBody(payload);
+        const body = parseSessionMessageBody(payload, hostRuntime !== undefined);
         if (body instanceof Response) return await rejectHostRuntime(hostRuntime, body);
 
         const policyRejection = checkUploadPolicy(body, uploadPolicy);
@@ -977,14 +982,17 @@ async function deriveOperationContinuationToken(input: {
   return `eve:op:${hex.slice(0, 32)}`;
 }
 
-function parseCreateBody(payload: Record<string, unknown>): ParsedCreateBody | Response {
+function parseCreateBody(
+  payload: Record<string, unknown>,
+  trustedHostRuntime: boolean,
+): ParsedCreateBody | Response {
   if (payload.inputResponses !== undefined) {
     return Response.json(
       { error: "'inputResponses' is only accepted for an existing session.", ok: false },
       { status: 400 },
     );
   }
-  const message = parseMessageField(payload.message);
+  const message = parseMessageField(payload.message, trustedHostRuntime);
   if (message instanceof Response) return message;
 
   const context = parseClientContextField(payload.clientContext);
@@ -1040,6 +1048,7 @@ interface ParsedSessionMessageBody {
 
 function parseSessionMessageBody(
   payload: Record<string, unknown>,
+  trustedHostRuntime: boolean,
 ): ParsedSessionMessageBody | Response {
   const tokenRejection = rejectSessionContinuationToken(payload);
   if (tokenRejection !== null) return tokenRejection;
@@ -1050,7 +1059,7 @@ function parseSessionMessageBody(
     );
   }
 
-  const message = parseMessageField(payload.message);
+  const message = parseMessageField(payload.message, trustedHostRuntime);
   if (message instanceof Response) return message;
   const callback = parseCallbackField(payload.callback);
   if (callback instanceof Response) return callback;
@@ -1273,7 +1282,10 @@ function parseTurnPolicyField(value: unknown): TurnPolicy | Response | undefined
   );
 }
 
-function parseMessageField(value: unknown): string | UserContent | undefined | Response {
+function parseMessageField(
+  value: unknown,
+  trustedHostRuntime: boolean,
+): string | UserContent | undefined | Response {
   if (value === undefined) return undefined;
   if (typeof value === "string") return value.length > 0 ? value : undefined;
 
@@ -1288,14 +1300,17 @@ function parseMessageField(value: unknown): string | UserContent | undefined | R
 
   const parts: Array<TextPart | FilePart> = [];
   for (const raw of value) {
-    const parsed = parseMessagePart(raw);
+    const parsed = parseMessagePart(raw, trustedHostRuntime);
     if (parsed instanceof Response) return parsed;
     parts.push(parsed);
   }
   return parts;
 }
 
-function parseMessagePart(raw: unknown): TextPart | FilePart | Response {
+function parseMessagePart(
+  raw: unknown,
+  trustedHostRuntime: boolean,
+): TextPart | FilePart | Response {
   if (raw === null || typeof raw !== "object") {
     return Response.json(
       { error: "Expected each message part to be an object.", ok: false },
@@ -1320,6 +1335,22 @@ function parseMessagePart(raw: unknown): TextPart | FilePart | Response {
         { error: "File parts require a non-empty 'mediaType' string.", ok: false },
         { status: 400 },
       );
+    }
+    if (isHostRuntimeAttachmentFilePart(part)) {
+      if (!trustedHostRuntime) {
+        return Response.json(
+          { error: "Host runtime file references require a trusted host runtime.", ok: false },
+          { status: 400 },
+        );
+      }
+      try {
+        return createHostRuntimeFilePart(parseHostRuntimeFilePart(part));
+      } catch {
+        return Response.json(
+          { error: "Host runtime file reference is invalid.", ok: false },
+          { status: 400 },
+        );
+      }
     }
     if (typeof part.data !== "string") {
       return Response.json(

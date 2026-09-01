@@ -11,6 +11,7 @@ import {
 import { AGENTS_SNIPPET_LABEL } from "#harness/handles/prompt.js";
 import { estimateModelMessageTokens, estimateTokens } from "#harness/token-estimate.js";
 import type { CompactionConfig } from "#harness/types.js";
+import { hostRuntimeFile } from "#public/attachments/index.js";
 
 vi.mock("ai", () => ({
   generateText: vi.fn(),
@@ -767,6 +768,29 @@ describe("compactMessages: active multimodal turn protection", () => {
     const prompt = String(summarizer.mock.calls[0]?.[0]?.prompt);
     expect(prompt).toContain("Attached file old.png (image/png)");
     expect(prompt).not.toContain(oldBase64);
+  });
+
+  it("renders host-runtime references as file metadata without resolving bytes", async () => {
+    const hostFile = hostRuntimeFile({
+      filename: "host-report.pdf",
+      mediaType: "application/pdf",
+      size: 12_345,
+      value: "private-host-file-id",
+    });
+    const oldFileMessage: ModelMessage = {
+      content: [hostFile],
+      role: "user",
+    };
+
+    const { summarizer } = await compact(
+      [oldFileMessage, assistant("I inspected it."), user("new question")],
+      { threshold: HEURISTICS_FORBIDDEN },
+    );
+
+    const prompt = String(summarizer.mock.calls[0]?.[0]?.prompt);
+    expect(prompt).toContain("Attached file host-report.pdf (application/pdf)");
+    expect(prompt).not.toContain("private-host-file-id");
+    expect(prompt).not.toContain("eve-attachment:");
   });
 });
 

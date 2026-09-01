@@ -30,6 +30,8 @@ export {
 } from "#runtime/host-runtime/resolve-context.js";
 export { withHostRuntime } from "#runtime/host-runtime/trusted-auth.js";
 export type {
+  HostRuntimeAttachment,
+  HostRuntimeAttachmentResolveInput,
   HostRuntimeAcceptanceStatus,
   HostRuntimeDefinition,
   HostRuntimeParentLineage,

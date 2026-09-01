@@ -8,6 +8,14 @@ export function registerHostRuntimeProvider(provider: HostRuntimeProvider): () =
   if (typeof provider.resolve !== "function") {
     throw new TypeError("Host runtime providers must define a resolve function.");
   }
+  if (
+    provider.resolveAttachment !== undefined &&
+    typeof provider.resolveAttachment !== "function"
+  ) {
+    throw new TypeError(
+      "Host runtime provider resolveAttachment must be a function when provided.",
+    );
+  }
 
   const session = getActiveRuntimeSession();
   if (session.hostRuntimeProviders.has(providerKind)) {

@@ -81,6 +81,14 @@ When an agent [disables its sandbox](#disabling-the-sandbox), eve sends incoming
 `file` parts to the model without staging them and preserves the inline payloads
 in durable history. Provider limits still apply to the original file data.
 
+Files created with `hostRuntimeFile()` are different: their bytes stay in the
+trusted host application's file store whether the sandbox is enabled or
+disabled. eve preserves only the `eve-attachment:` reference and display
+metadata in durable history, skips `/workspace/attachments`, and asks the
+active Host Runtime Provider for bytes immediately before each model request.
+The transient bytes are not written back to the sandbox, session history,
+events, or workflow snapshots.
+
 ## Seeding `/workspace`
 
 Mount authored files into the sandbox at session start by placing them under `agent/sandbox/workspace/`. This requires the folder layout (`agent/sandbox/sandbox.ts`), not the top-level shorthand:

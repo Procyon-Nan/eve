@@ -4,7 +4,7 @@
 
 import type { FilePart, UserContent } from "ai";
 
-import { getKnownByteLength } from "#internal/attachments/data.js";
+import { getKnownFilePartByteLength } from "#internal/attachments/data.js";
 
 /**
  * Framework policy for inbound attachments. Either the literal
@@ -152,7 +152,7 @@ export function evaluateFilePart(
     return violation;
   }
 
-  const byteLength = getKnownByteLength(part.data);
+  const byteLength = getKnownFilePartByteLength(part);
   if (byteLength !== null && byteLength > policy.maxBytes) {
     const violation: UploadPolicyViolation = {
       byteLength,

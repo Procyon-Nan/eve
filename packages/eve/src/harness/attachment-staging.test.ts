@@ -6,6 +6,7 @@ import { ContextContainer } from "#context/container.js";
 import { decodeSandboxRef, isSandboxRefUrl } from "#internal/attachments/sandbox-refs.js";
 import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
 import { ATTACHMENTS_ROOT, stageAttachmentsForAdapter } from "#harness/attachment-staging.js";
+import { hostRuntimeFile } from "#public/attachments/index.js";
 
 const UTF8 = new TextEncoder();
 const ATTACHMENTS_PATH_PATTERN = /^\/workspace\/attachments\/[0-9a-f]{16}\//;
@@ -35,6 +36,19 @@ function findWrite(
 }
 
 describe("stageAttachmentsForAdapter", () => {
+  it("preserves host-runtime references without writing them into an enabled sandbox", async () => {
+    const sandbox = mockSandbox();
+    const part = hostRuntimeFile({
+      filename: "diagram.png",
+      mediaType: "image/png",
+      size: 4,
+      value: "file_123",
+    });
+    const staged = await stageAttachmentsForAdapter([part], sandbox.session, STUB_ADAPTER_CTX);
+
+    expect(staged).toEqual([part]);
+    expect(sandbox.writes).toHaveLength(0);
+  });
   it("passes plain-string messages through unchanged and never touches the sandbox", async () => {
     const sandbox = mockSandbox();
     const result = await stageAttachmentsForAdapter(

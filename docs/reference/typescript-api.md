@@ -60,10 +60,26 @@ A few additional helpers round out the set: `defineGlobTool`, `defineGrepTool`, 
 
 Host integrations import `registerHostRuntimeProvider`, `withHostRuntime`,
 `hostRuntimeModel`, `hostRuntimeInstructions`, and `hostRuntimeTools` from
-`eve`. `HostRuntimeError` exposes the deterministic `HOST_RUNTIME_*` codes a
-provider may use to reject an invalid or unavailable reference. The provider,
-reference, resolved-runtime, parent-lineage, release, and trusted-input types
-are exported from the same entrypoint.
+`eve`, and `hostRuntimeFile` from `eve/attachments`.
+`toolOutputPart.hostRuntimeFile` is available from `eve/tools`. The provider,
+attachment, reference, resolved-runtime, parent-lineage, release, and
+trusted-input types are exported with their helpers.
+
+`HostRuntimeProvider.resolveAttachment` receives the opaque attachment value,
+standard file metadata, current runtime reference, session ID, optional
+specialist parent lineage, and an `AbortSignal`. It returns a `Uint8Array` for
+that model request. The four deterministic attachment errors are:
+
+| Code                                           | Meaning                                                         |
+| ---------------------------------------------- | --------------------------------------------------------------- |
+| `HOST_RUNTIME_ATTACHMENT_REFERENCE_INVALID`    | The versioned reference or declared metadata is invalid.        |
+| `HOST_RUNTIME_ATTACHMENT_RESOLVER_UNAVAILABLE` | The active runtime has no attachment resolver.                  |
+| `HOST_RUNTIME_ATTACHMENT_UNAVAILABLE`          | The host reports that the file is missing or unauthorized.      |
+| `HOST_RUNTIME_ATTACHMENT_RESOLUTION_FAILED`    | The resolver result or durable tool-output restoration differs. |
+
+An attachment error fails the current turn or specialist invocation without a
+fallback. An unclassified provider error stays on the normal workflow retry
+path, and an `AbortError` stays a cancellation.
 
 `withHostRuntime(auth, { acceptanceKey, reference })` attaches a verified,
 server-only handoff to the principal returned by the built-in eve channel's
@@ -106,6 +122,7 @@ and an indeterminate read returns `503` with `Retry-After: 1`.
 | `eve/skills`                                                | `defineSkill`, `defineDynamic`                                                                            |
 | `eve/instructions`                                          | `defineInstructions`, `defineDynamic`                                                                     |
 | `eve/context`                                               | `defineState`, session and state types                                                                    |
+| `eve/attachments`                                           | `hostRuntimeFile`, `HostRuntimeAttachment`                                                                |
 | `eve/sandbox`                                               | `defineSandbox`, `disableSandbox`, backends                                                               |
 | `eve/instrumentation`                                       | `defineInstrumentation`, `isChannel`                                                                      |
 | `eve/models/openai`                                         | `chatgpt`, deprecated `experimental_chatgpt`                                                              |

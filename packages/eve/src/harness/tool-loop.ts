@@ -77,10 +77,11 @@ import {
   isWorkflowRuntimeActionInterrupt,
 } from "#harness/workflow-runtime-action-state.js";
 import type { InputRequest } from "#runtime/input/types.js";
+import { hydrateModelAttachments, stageAttachmentsToSandbox } from "#harness/attachment-staging.js";
 import {
-  hydrateSandboxAttachments,
-  stageAttachmentsToSandbox,
-} from "#harness/attachment-staging.js";
+  createHostRuntimeToolOutputState,
+  restoreHostRuntimeToolOutputs,
+} from "#harness/host-runtime-tool-outputs.js";
 import {
   buildWorkflowHostTools,
   resolveWorkflowSandboxBridgeRequestLimit,
@@ -1266,17 +1267,11 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
      * `console.error(error)` handler inside `streamText`. Errors are
      * handled by the harness catch block and emitted as stream events.
      */
-    // Hydrate `eve-sandbox:` ref FileParts into inline bytes for the
-    // model call only. The result is transient — `messages` itself
-    // remains ref-only so it can flow into `session.history` without
-    // bloating every future step boundary.
-    const hydratedMessages = await hydrateSandboxAttachments(messages);
-
     // AI SDK rejects role:"system" in `messages` — route system entries
     // from durable history to `instructions` instead.
     const systemMessages: SystemModelMessage[] = [];
     const nonSystemMessages: ModelMessage[] = [];
-    for (const entry of hydratedMessages) {
+    for (const entry of messages) {
       if (entry.role === "system") {
         systemMessages.push(entry);
       } else {
@@ -1357,6 +1352,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
     const runSingleModelCall = async (
       opts: ModelCallOptions & { readonly attemptIndex: number },
     ): Promise<HarnessStepResult> => {
+      const modelCallSignal =
+        createModelCallAbortSignal(config.abortSignal, config.modelCallTimeoutMs) ??
+        new AbortController().signal;
+      const hostRuntimeAttachments = {
+        signal: modelCallSignal,
+        state: createHostRuntimeToolOutputState(),
+      };
       const { instructions, telemetryRuntimeContext = {} } =
         opts.preparedInput ?? prepareModelCallInput(opts.extraSystemNote);
       // Label the reissued call's telemetry; without this a retry is only
@@ -1368,9 +1370,10 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       // cached prompt prefix valid, and handleStepResult rebuilds history
       // from the step's prompt messages, so the note exists only on this
       // call's wire request.
-      const callMessages = opts.trailingUserNote
+      const durableCallMessages = opts.trailingUserNote
         ? [...modelMessages, { role: "user" as const, content: opts.trailingUserNote }]
         : modelMessages;
+      const callMessages = await hydrateModelAttachments(durableCallMessages, modelCallSignal);
       const harnessTools = buildHarnessToolsWithDynamicSubagents(config.tools, ctx);
       const advertisedHarnessTools = getAdvertisedTools({
         delegatedCaller: taskUpdatesEnabled,
@@ -1386,6 +1389,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         modelReference: requireSessionModelReference(session),
         tools: advertisedHarnessTools,
         webSearchProvider: config.webSearchProvider,
+        hostRuntimeAttachments,
       });
 
       if (ctx !== undefined) {
@@ -1399,6 +1403,7 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           capabilities: config.capabilities,
           disabledProviderTools: opts.disabledProviderTools,
           tools: dynamicTools,
+          hostRuntimeAttachments,
         });
         // Dynamic tools override a same-named authored tool.
         for (const [name, toolDefinition] of Object.entries(dynamicToolSet)) {
@@ -1507,10 +1512,6 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
       const agent = new ToolLoopAgent(agentSettings);
 
       const executeModelCall = async (): Promise<HarnessStepResult> => {
-        const modelCallSignal = createModelCallAbortSignal(
-          config.abortSignal,
-          config.modelCallTimeoutMs,
-        );
         if (emit) {
           const hiddenRuntimeActionToolNames = [...config.tools]
             .filter(
@@ -1550,7 +1551,15 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           ) {
             throw new EmptyModelResponseError();
           }
-          await emitStepActions(emit, emissionState, stepResult, {
+          const restoredStepResult = withAccumulatedResponseMessages({
+            responseMessages: restoreHostRuntimeToolOutputs({
+              messages: stepResult.response.messages,
+              requireAll: false,
+              state: hostRuntimeAttachments.state,
+            }),
+            stepResult,
+          });
+          await emitStepActions(emit, emissionState, restoredStepResult, {
             emittedActionCallIds,
             excludedActionCallIds: invalidInputToolCallIds,
             excludedActionToolNames,
@@ -1566,11 +1575,15 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           }
           return withAccumulatedResponseMessages({
             invalidInputToolCallIds,
-            responseMessages: appendMissingToolResultMessages({
-              append: trailingInlineToolResultParts,
-              responseMessages: accumulatedResponseMessages,
+            responseMessages: restoreHostRuntimeToolOutputs({
+              messages: appendMissingToolResultMessages({
+                append: trailingInlineToolResultParts,
+                responseMessages: accumulatedResponseMessages,
+              }),
+              requireAll: true,
+              state: hostRuntimeAttachments.state,
             }),
-            stepResult,
+            stepResult: restoredStepResult,
             toolResults: [...toolResultsByCallId.values()],
           });
         }
@@ -1587,8 +1600,19 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
           throw new EmptyModelResponseError();
         }
         return withAccumulatedResponseMessages({
-          responseMessages: generateResult.responseMessages,
-          stepResult,
+          responseMessages: restoreHostRuntimeToolOutputs({
+            messages: generateResult.responseMessages,
+            requireAll: true,
+            state: hostRuntimeAttachments.state,
+          }),
+          stepResult: withAccumulatedResponseMessages({
+            responseMessages: restoreHostRuntimeToolOutputs({
+              messages: stepResult.response.messages,
+              requireAll: false,
+              state: hostRuntimeAttachments.state,
+            }),
+            stepResult,
+          }),
         });
       };
 
@@ -1712,6 +1736,13 @@ export function createToolLoopHarness(config: ToolLoopHarnessConfig): StepFn {
         const finalError = recoveryResult.error;
         if (turnSpan) {
           recordErrorOnSpan(turnSpan, finalError);
+        }
+
+        // Host-runtime attachment failures are deterministic. Let the workflow
+        // boundary preserve their code and settle only this turn or specialist
+        // invocation instead of classifying them as model-provider failures.
+        if (isHostRuntimeError(finalError)) {
+          throw finalError;
         }
 
         if (!emit) {
@@ -3256,6 +3287,7 @@ async function runModelCallWithRetries<T>(
       const retryAllModelErrors = options.retryAllModelErrors === true;
       const retryable = retryAllModelErrors
         ? !isTurnCancellation(error) &&
+          !isHostRuntimeError(error) &&
           !(error instanceof EmptyModelResponseError) &&
           extractUnsupportedProviderToolTypes(error).length === 0
         : classifyModelCallError(error) === "retry";

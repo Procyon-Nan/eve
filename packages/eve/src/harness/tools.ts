@@ -22,6 +22,10 @@ import { stashToolInterrupt } from "#harness/tool-interrupts.js";
 import { normalizeToolJsonOutput, normalizeToolModelOutput } from "#harness/tool-model-output.js";
 import type { ToolExecuteOptions } from "#shared/tool-definition.js";
 import { isAsyncIterable } from "#shared/async-iterable.js";
+import {
+  hydrateHostRuntimeToolOutput,
+  type HostRuntimeToolOutputState,
+} from "#harness/host-runtime-tool-outputs.js";
 
 type NativeApprovalStatus = Exclude<ApprovalStatus, boolean>;
 
@@ -51,6 +55,10 @@ export function buildToolSet(input: {
   readonly capabilities?: SessionCapabilities;
   readonly disabledProviderTools?: ReadonlySet<string>;
   readonly tools: HarnessToolMap;
+  readonly hostRuntimeAttachments?: {
+    readonly signal: AbortSignal;
+    readonly state: HostRuntimeToolOutputState;
+  };
 }): ToolSet {
   const tools: Record<string, ToolSet[string]> = {};
   const canRequestInput = input.capabilities?.requestInput === true;
@@ -88,20 +96,30 @@ export function buildToolSet(input: {
                 };
               }
               if (authorToModelOutput !== undefined) {
-                return normalizeToolModelOutput({
+                const normalized = normalizeToolModelOutput({
                   output: await authorToModelOutput(output),
                   toolCallId,
                   toolName: definition.name,
                 });
+                return input.hostRuntimeAttachments === undefined
+                  ? normalized
+                  : await hydrateHostRuntimeToolOutput({
+                      output: normalized,
+                      signal: input.hostRuntimeAttachments.signal,
+                      state: input.hostRuntimeAttachments.state,
+                      toolCallId,
+                      toolName: definition.name,
+                    });
               }
               if (typeof output === "string") {
                 return { type: "text" as const, value: output };
               }
-              return normalizeToolModelOutput({
+              const normalized = normalizeToolModelOutput({
                 output: { type: "json" as const, value: output ?? null },
                 toolCallId,
                 toolName: definition.name,
               });
+              return normalized;
             },
           }
         : authorToModelOutput !== undefined
@@ -112,12 +130,22 @@ export function buildToolSet(input: {
               }: {
                 readonly output: unknown;
                 readonly toolCallId?: string;
-              }) =>
-                normalizeToolModelOutput({
+              }) => {
+                const normalized = normalizeToolModelOutput({
                   output: await authorToModelOutput(output),
                   toolCallId,
                   toolName: definition.name,
-                }),
+                });
+                return input.hostRuntimeAttachments === undefined
+                  ? normalized
+                  : await hydrateHostRuntimeToolOutput({
+                      output: normalized,
+                      signal: input.hostRuntimeAttachments.signal,
+                      state: input.hostRuntimeAttachments.state,
+                      toolCallId,
+                      toolName: definition.name,
+                    });
+              },
             }
           : {}),
     });
@@ -141,6 +169,10 @@ export function buildToolSetFromDefinitions(input: {
   readonly capabilities?: SessionCapabilities;
   readonly disabledProviderTools?: ReadonlySet<string>;
   readonly tools: readonly HarnessToolDefinition[];
+  readonly hostRuntimeAttachments?: {
+    readonly signal: AbortSignal;
+    readonly state: HostRuntimeToolOutputState;
+  };
 }): ToolSet {
   const tools = new Map<string, HarnessToolDefinition>();
   for (const definition of input.tools) {
@@ -153,6 +185,7 @@ export function buildToolSetFromDefinitions(input: {
     capabilities: input.capabilities,
     disabledProviderTools: input.disabledProviderTools,
     tools,
+    hostRuntimeAttachments: input.hostRuntimeAttachments,
   });
 }
 
@@ -239,6 +272,10 @@ export async function buildToolSetWithProviderTools(input: {
   readonly disabledProviderTools?: ReadonlySet<string>;
   readonly modelReference: RuntimeModelReference;
   readonly tools: HarnessToolMap;
+  readonly hostRuntimeAttachments?: {
+    readonly signal: AbortSignal;
+    readonly state: HostRuntimeToolOutputState;
+  };
   readonly webSearchProvider?: WebSearchProvider;
 }): Promise<ToolSet> {
   const disabled = input.disabledProviderTools;
@@ -248,6 +285,7 @@ export async function buildToolSetWithProviderTools(input: {
       capabilities: input.capabilities,
       disabledProviderTools: disabled,
       tools: input.tools,
+      hostRuntimeAttachments: input.hostRuntimeAttachments,
     }),
   };
 

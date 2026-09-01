@@ -111,6 +111,11 @@
       "import": "./dist/src/public/tools/index.js",
       "default": "./dist/src/public/tools/index.js"
     },
+    "./attachments": {
+      "types": "./dist/src/public/attachments/index.d.ts",
+      "import": "./dist/src/public/attachments/index.js",
+      "default": "./dist/src/public/attachments/index.js"
+    },
     "./tools/defaults": {
       "types": "./dist/src/public/tools/defaults.d.ts",
       "import": "./dist/src/public/tools/defaults.js",

@@ -6,6 +6,10 @@ import {
   isSerializedUrlFilePart,
 } from "#internal/attachments/url-refs.js";
 import { decodeSandboxRef, isSandboxRefUrl } from "#internal/attachments/sandbox-refs.js";
+import {
+  isHostRuntimeAttachmentFilePart,
+  parseHostRuntimeFilePart,
+} from "#internal/attachments/host-runtime-refs.js";
 import { createEventId } from "#protocol/event-id.js";
 import {
   createEveSessionStreamRoutePath,
@@ -907,7 +911,18 @@ function projectUserContentParts(message: string | UserContent): readonly Messag
     if (part.type === "text") {
       parts.push({ text: part.text, type: "text" });
     } else if (part.type === "file") {
-      parts.push(projectFileLikePart(part.data, part.mediaType, part.filename));
+      if (isHostRuntimeAttachmentFilePart(part)) {
+        const attachment = parseHostRuntimeFilePart(part);
+        parts.push(
+          createProjectedFilePart({
+            filename: attachment.filename,
+            mediaType: attachment.mediaType,
+            size: attachment.size,
+          }),
+        );
+      } else {
+        parts.push(projectFileLikePart(part.data, part.mediaType, part.filename));
+      }
     } else if (part.type === "image") {
       parts.push(
         projectFileLikePart(

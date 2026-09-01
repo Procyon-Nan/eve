@@ -147,7 +147,37 @@ The `toolOutput.text` and `toolOutput.json` builders construct the other two out
 
 File payloads must be base64 strings — raw bytes (`Uint8Array`, `Buffer`) are rejected because they do not survive eve's durable JSON boundary. Keep payloads small: a content-part image is persisted in session history and re-sent on every subsequent model call, and eve warns above 3 MiB. Sending image parts to a model without vision support fails with that provider's error, the same as image parts in user messages.
 
-When older turns are compacted, file payloads are dropped from the summary and replaced with a text stub naming the file and media type — the model cannot re-see a compacted image. Content parts are for "look at this now"; if the agent may need an artifact again later, write it to the [sandbox](/docs/sandbox) and return its path.
+### Reference files owned by a host runtime
+
+A [host runtime provider](/docs/guides/dynamic-capabilities#host-runtime-snapshots)
+can keep file bytes in its own authorized store. Return only metadata from
+`execute`, then map it with `toolOutputPart.hostRuntimeFile()`:
+
+```ts
+import { defineTool, toolOutput, toolOutputPart } from "eve/tools";
+import { z } from "zod";
+
+export default defineTool({
+  description: "Load a report attachment",
+  inputSchema: z.object({ reportId: z.string() }),
+  async execute({ reportId }) {
+    return reportStore.getAttachmentMetadata(reportId);
+  },
+  toModelOutput(attachment) {
+    return toolOutput.content([toolOutputPart.hostRuntimeFile(attachment)]);
+  },
+});
+```
+
+The `execute` result remains the durable `action.result`. The model receives
+bytes resolved by the active provider for that request, but eve restores the
+reference before writing tool response messages to session history. Later
+model calls resolve the reference again under the then-current runtime
+reference, session, and specialist lineage. Missing resolvers, deleted files,
+denied access, invalid references, and byte-length mismatches fail without a
+Base64 or sandbox fallback.
+
+When older turns are compacted, file payloads and host-runtime references are dropped from the summary and replaced with a text stub naming the file and media type — the model cannot re-see a compacted image. Inline content parts are for "look at this now"; if the agent may need an artifact again after compaction, write it to the [sandbox](/docs/sandbox) and return its path, or expose a tool that can create a fresh host-runtime reference.
 
 Do not return secrets, credentials, unnecessary personal data, or unbounded sensitive content from tools. Filter, minimize, and redact tool outputs before returning them.
 

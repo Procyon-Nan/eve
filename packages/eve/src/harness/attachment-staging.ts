@@ -10,6 +10,10 @@ import { loadContext } from "#context/container.js";
 import { SandboxKey } from "#context/keys.js";
 import { ChannelKey } from "#runtime/sessions/runtime-context-keys.js";
 import { fileDataToBytes } from "#internal/attachments/data.js";
+import {
+  isHostRuntimeAttachmentFilePart,
+  parseHostRuntimeFilePart,
+} from "#internal/attachments/host-runtime-refs.js";
 import { EveAttachmentError } from "#internal/attachments/errors.js";
 import { createLogger } from "#internal/logging.js";
 import { deserializeUrlFilePart, isSerializedUrlFilePart } from "#internal/attachments/url-refs.js";
@@ -21,6 +25,10 @@ import {
 } from "#internal/attachments/sandbox-refs.js";
 import type { SandboxSession } from "#public/definitions/sandbox.js";
 import { toErrorMessage } from "#shared/errors.js";
+import {
+  hydrateHostRuntimeToolOutputParts,
+  resolveHostRuntimeAttachment,
+} from "#runtime/host-runtime/attachments.js";
 
 /**
  * Sandbox directory where inbound file attachments are staged before the
@@ -82,8 +90,9 @@ export async function stageAttachmentsForAdapter(
 }
 
 /**
- * Context-bound variant of {@link stageAttachmentsForAdapter}. Returns
- * the input unchanged when there is no active sandbox or no file parts.
+ * Context-bound variant of {@link stageAttachmentsForAdapter}. Returns the
+ * input unchanged when there is no active sandbox or no sandbox-owned file
+ * part; host-runtime references always bypass sandbox initialization.
  */
 export async function stageAttachmentsToSandbox(
   message: string | UserContent,
@@ -94,7 +103,7 @@ export async function stageAttachmentsToSandbox(
   if (!Array.isArray(message)) {
     return message;
   }
-  if (!hasFileParts(message)) {
+  if (!hasAttachmentsToStage(message)) {
     return message;
   }
 
@@ -168,9 +177,27 @@ export async function hydrateSandboxAttachments(
   );
 }
 
-function hasFileParts(content: Exclude<UserContent, string>): boolean {
+/** Hydrates every framework attachment reference into one transient model-message copy. */
+export async function hydrateModelAttachments(
+  messages: readonly ModelMessage[],
+  signal: AbortSignal,
+): Promise<ModelMessage[]> {
+  const sandboxHydrated = await hydrateSandboxAttachments(messages);
+  if (!messagesContainHostRuntimeRef(sandboxHydrated)) {
+    return sandboxHydrated;
+  }
+  return await Promise.all(
+    sandboxHydrated.map(async (message) => {
+      if (!messageContainsHostRuntimeRef(message)) return message;
+      const content = await hydrateHostRuntimeContent(message.content, signal);
+      return { ...message, content } as ModelMessage;
+    }),
+  );
+}
+
+function hasAttachmentsToStage(content: Exclude<UserContent, string>): boolean {
   for (const part of content) {
-    if (part.type === "file") {
+    if (part.type === "file" && !isHostRuntimeAttachmentFilePart(part)) {
       return true;
     }
   }
@@ -197,6 +224,41 @@ function messageContainsSandboxRef(message: ModelMessage): boolean {
     }
   }
   return false;
+}
+
+function messagesContainHostRuntimeRef(messages: readonly ModelMessage[]): boolean {
+  return messages.some(messageContainsHostRuntimeRef);
+}
+
+function messageContainsHostRuntimeRef(message: ModelMessage): boolean {
+  const content = message.content;
+  if (!Array.isArray(content)) return false;
+  if (content.some(isHostRuntimeAttachmentFilePart)) return true;
+  return content.some((part) => {
+    if (part === null || typeof part !== "object" || part.type !== "tool-result") return false;
+    const output = part.output;
+    return output.type === "content" && output.value.some(isHostRuntimeAttachmentFilePart);
+  });
+}
+
+async function hydrateHostRuntimeContent(content: unknown, signal: AbortSignal): Promise<unknown> {
+  if (!Array.isArray(content)) return content;
+  return await Promise.all(
+    content.map(async (part) => {
+      if (isHostRuntimeAttachmentFilePart(part)) {
+        const attachment = parseHostRuntimeFilePart(part);
+        const bytes = await resolveHostRuntimeAttachment(part, signal);
+        return { ...part, data: bytes, mediaType: attachment.mediaType };
+      }
+      if (part === null || typeof part !== "object" || part.type !== "tool-result") {
+        return part;
+      }
+      const output = part.output;
+      if (output.type !== "content") return part;
+      const value = await hydrateHostRuntimeToolOutputParts(output.value, signal);
+      return value === output.value ? part : { ...part, output: { ...output, value } };
+    }),
+  );
 }
 
 /**
@@ -292,6 +354,10 @@ async function stageFilePart(
   sandbox: SandboxSession,
   adapterCtx: ChannelAdapterContext,
 ): Promise<FilePart> {
+  if (isHostRuntimeAttachmentFilePart(part)) {
+    parseHostRuntimeFilePart(part);
+    return part;
+  }
   if (isSandboxRefUrl(part.data)) {
     return part;
   }

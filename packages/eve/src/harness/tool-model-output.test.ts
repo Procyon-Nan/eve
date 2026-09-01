@@ -30,6 +30,30 @@ describe("normalizeToolJsonOutput", () => {
 });
 
 describe("normalizeToolModelOutput", () => {
+  it("accepts the reserved host-runtime file builder and rejects hand-written provider references", () => {
+    const hostFile = toolOutputPart.hostRuntimeFile({
+      filename: "chart.png",
+      mediaType: "image/png",
+      size: 4,
+      value: "file_123",
+    });
+    expect(normalize({ type: "content", value: [hostFile] })).toEqual({
+      type: "content",
+      value: [hostFile],
+    });
+    expect(() =>
+      normalize({
+        type: "content",
+        value: [
+          {
+            data: { reference: { openai: "file_123" }, type: "reference" },
+            mediaType: "image/png",
+            type: "file",
+          },
+        ],
+      }),
+    ).toThrow(/reserved for eve host-runtime references/u);
+  });
   it("normalizes a content output of text and file parts into the AI SDK shape", () => {
     const pixel =
       "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAS0lEQVR42u3PQQkAAAgAsetfWiP4FgYrsKZeS0BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEDgsqnc8OJg6Ln3AAAAAElFTkSuQmCC";
@@ -98,7 +122,7 @@ describe("normalizeToolModelOutput", () => {
     [
       "reference file-data tag",
       { type: "reference", reference: "file_abc" },
-      /"reference" is not supported yet/u,
+      /"reference" is reserved for eve host-runtime references/u,
     ],
     ["text file-data tag", { type: "text", text: "inline" }, /"text" is not supported yet/u],
     ["untagged string data", "aGVsbG8=", /expected object, received string at "value\[0\]\.data"/u],

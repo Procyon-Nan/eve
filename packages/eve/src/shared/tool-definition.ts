@@ -3,6 +3,7 @@ import type {
   StandardJSONSchemaV1,
   StandardSchemaV1,
 } from "#compiled/@standard-schema/spec/index.js";
+import type { HostRuntimeAttachmentFilePart } from "#shared/host-runtime.js";
 import type { JsonObject } from "#shared/json.js";
 
 /**
@@ -89,10 +90,10 @@ export type ToolModelOutput =
 /**
  * One part of a `content` {@link ToolModelOutput}. Mirrors the AI SDK's
  * `ToolResultOutput` content parts narrowed to the JSON-safe subset:
- * file data is the SDK's tagged `FileData` union restricted to
- * `{ type: "data" }` with a base64 string, so persisted tool results
- * survive the durable JSON boundary. Use the `toolOutputPart` builders
- * from `eve/tools` to construct parts without hand-writing the nesting.
+ * file data is the SDK's tagged `FileData` union restricted to either
+ * JSON-safe base64 or an eve-owned Host Runtime reference. Use the
+ * `toolOutputPart` builders from `eve/tools` to construct parts without
+ * hand-writing the nesting.
  */
 export type ToolModelOutputPart =
   | { readonly type: "text"; readonly text: string }
@@ -103,4 +104,5 @@ export type ToolModelOutputPart =
       /** IANA media type, e.g. `image/png`. */
       readonly mediaType: string;
       readonly filename?: string;
-    };
+    }
+  | HostRuntimeAttachmentFilePart;

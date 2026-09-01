@@ -1,4 +1,6 @@
 import type { ToolModelOutput, ToolModelOutputPart } from "#shared/tool-definition.js";
+import { createHostRuntimeFilePart } from "#internal/attachments/host-runtime-refs.js";
+import type { HostRuntimeAttachment } from "#shared/host-runtime.js";
 
 /**
  * Builders for the model-facing {@link ToolModelOutput} returned by
@@ -74,5 +76,9 @@ export const toolOutputPart = {
       part.filename = options.filename;
     }
     return part;
+  },
+  /** Builds a file part whose bytes remain in the active trusted host runtime. */
+  hostRuntimeFile(input: HostRuntimeAttachment): ToolModelOutputPart {
+    return createHostRuntimeFilePart(input);
   },
 };
