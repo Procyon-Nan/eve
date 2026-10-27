@@ -5,7 +5,7 @@ import {
   hostRuntimeAcceptanceWorkflowReference,
   startWorkflowPreferLatest,
 } from "#execution/workflow-runtime.js";
-import { getHookByToken, getRun, getWorld, resumeHook } from "#internal/workflow/runtime.js";
+import { getHookByToken, getWorld, resumeHook } from "#internal/workflow/runtime.js";
 import { validateHostRuntimeAcceptanceKey } from "#runtime/host-runtime/validation.js";
 import {
   HOST_RUNTIME_ACCEPTANCE_ATTRIBUTE,
@@ -73,6 +73,8 @@ export async function recordHostRuntimeAcceptance(
   status: HostRuntimeAcceptanceStatus,
 ): Promise<void> {
   const key = validateHostRuntimeAcceptanceKey(acceptanceKey);
+  const deadline = Date.now() + ACCEPTANCE_RECEIPT_TIMEOUT_MS;
+  let writeError: unknown;
 
   try {
     const hook = await getHookByToken(hostRuntimeAcceptanceHookToken(key));
@@ -83,22 +85,18 @@ export async function recordHostRuntimeAcceptance(
     if (durable === "ACCEPTED" || durable === "NOT_ACCEPTED") {
       throw new HostRuntimeAcceptanceIndeterminateError();
     }
+    if (Date.now() >= deadline) throw new HostRuntimeAcceptanceIndeterminateError();
     await resumeHook(hook, status);
-    const recorded = await withTimeout(
-      getRun<HostRuntimeAcceptanceStatus>(hook.runId).returnValue,
-      ACCEPTANCE_RECEIPT_TIMEOUT_MS,
-    );
+  } catch (error) {
+    writeError = error;
+  }
+
+  // A failed resume may still have persisted; observe it within the same budget.
+  try {
+    const recorded = await waitForDurableAcceptanceStatus(key, deadline);
     if (recorded !== status) throw new HostRuntimeAcceptanceIndeterminateError();
   } catch (error) {
-    try {
-      const recorded = await waitForDurableAcceptanceStatus(key);
-      if (recorded === status) {
-        return;
-      }
-    } catch {
-      // The original write failure remains indeterminate when no matching receipt is readable.
-    }
-    throw new HostRuntimeAcceptanceIndeterminateError({ cause: error });
+    throw new HostRuntimeAcceptanceIndeterminateError({ cause: writeError ?? error });
   }
 }
 
@@ -150,33 +148,20 @@ async function queryDurableHostRuntimeAcceptance(
 
 async function waitForDurableAcceptanceStatus(
   acceptanceKey: string,
+  deadline: number,
 ): Promise<HostRuntimeAcceptanceStatus> {
-  const deadline = Date.now() + ACCEPTANCE_RECEIPT_TIMEOUT_MS;
-  while (true) {
+  let lastError: unknown;
+  while (Date.now() < deadline) {
     try {
       return await queryDurableHostRuntimeAcceptance(acceptanceKey);
     } catch (error) {
-      if (!(error instanceof HostRuntimeAcceptanceIndeterminateError) || Date.now() >= deadline) {
-        throw error;
-      }
+      if (!(error instanceof HostRuntimeAcceptanceIndeterminateError)) throw error;
+      lastError = error;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(20, remaining)));
+    }
   }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new HostRuntimeAcceptanceIndeterminateError()),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
+  throw new HostRuntimeAcceptanceIndeterminateError({ cause: lastError });
 }
