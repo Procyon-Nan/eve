@@ -1,5 +1,7 @@
 import { relative } from "node:path";
 
+import { patchCoreStreamLifecycle } from "./core-stream-lifecycle.mjs";
+
 import {
   buildOpaqueTypesStub,
   buildUniqueSymbolStub,
@@ -167,7 +169,7 @@ export default {
   packageName: "@workflow/core",
   compiledPath: "@workflow/core",
   chunkGroup: "workflow",
-  plugins: [stubCoreWorldFactories(), stubCoreQuickJSEntrypoint()],
+  plugins: [stubCoreWorldFactories(), stubCoreQuickJSEntrypoint(), patchCoreStreamLifecycle()],
   entries: [
     {
       outputPath: "index",
