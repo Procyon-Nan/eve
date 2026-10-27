@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +117,109 @@ describe("compiled local stream lifecycle", () => {
       await sleep(250);
       expect(reads).not.toHaveBeenCalled();
       expect(get).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2);
+    },
+  );
+
+  it("does not reconnect after cancellation while EOF metadata is pending", async () => {
+    const { world } = await localWorld();
+    setWorld(world);
+    const entered = Promise.withResolvers<void>();
+    const metadata = Promise.withResolvers<{ done: boolean; tailIndex: number }>();
+    const get = vi.spyOn(world.streams, "get").mockImplementation(
+      async () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+    );
+    vi.spyOn(world.streams, "getInfo").mockImplementation(() => {
+      entered.resolve();
+      return metadata.promise;
+    });
+    const reader = getRun("wrun_audit").getReadable().getReader();
+    const pending = reader.read();
+    await entered.promise;
+    const cancellation = reader.cancel();
+    metadata.resolve({ done: false, tailIndex: -1 });
+    await cancellation;
+    await expect(pending).resolves.toMatchObject({ done: true });
+    reader.releaseLock();
+    await sleep(250);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect((await get.mock.results[0]!.value).locked).toBe(false);
+  });
+
+  it.each([undefined, "EIO", "EACCES"])(
+    "handles cross-process polling with read failure %s",
+    async (code) => {
+      const { world, dataDir } = await localWorld();
+      const setInterval = vi.spyOn(globalThis, "setInterval");
+      const clearInterval = vi.spyOn(globalThis, "clearInterval");
+      const readdir = vi.spyOn(fs, "readdir");
+      const reader = (await world.streams.get("wrun_audit", "external-writer", 0)).getReader();
+      const first = reader.read().then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        await vi.waitFor(() => expect(setInterval).toHaveBeenCalled());
+        const poller = setInterval.mock.results[0]!.value;
+        if (code) {
+          const original = fs.readFile.bind(fs);
+          vi.spyOn(fs, "readFile").mockImplementation((...args) => {
+            if (String(args[0]).endsWith(".bin")) {
+              return Promise.reject(
+                Object.assign(new Error("injected poll read failure"), { code }),
+              );
+            }
+            return original(...args);
+          });
+        }
+        const compiledWorld = new URL(
+          "../../.generated/compiled/@workflow/world-local/index.js",
+          import.meta.url,
+        ).href;
+        await promisify(execFile)(
+          process.execPath,
+          [
+            "--input-type=module",
+            "--eval",
+            `
+        const { createWorld } = await import(process.argv[1]);
+        const world = createWorld({ dataDir: process.argv[2], recoverActiveRuns: false });
+        try {
+          await world.streams.write('wrun_audit', 'external-writer', 'first');
+          await world.streams.write('wrun_audit', 'external-writer', 'second');
+          await world.streams.close('wrun_audit', 'external-writer');
+        } finally { await world.close(); }
+      `,
+            compiledWorld,
+            dataDir,
+          ],
+          { timeout: 15_000 },
+        );
+        const result = await first;
+        if (code) {
+          expect(result).toMatchObject({ error: { code } });
+        } else {
+          if (!("value" in result)) throw result.error;
+          const values = [new TextDecoder().decode(result.value.value)];
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            values.push(new TextDecoder().decode(next.value));
+          }
+          expect(values).toEqual(["first", "second"]);
+        }
+        expect(clearInterval).toHaveBeenCalledWith(poller);
+        const scans = readdir.mock.calls.length;
+        await sleep(250);
+        expect(readdir).toHaveBeenCalledTimes(scans);
+      } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+      }
     },
   );
 
