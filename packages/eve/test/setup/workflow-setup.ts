@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { createWorld } from "@workflow/world-local";
+import { createWorld } from "#compiled/@workflow/world-local/index.js";
 import { afterAll } from "vitest";
 
 import { resolvePackageRoot } from "#internal/application/package.js";

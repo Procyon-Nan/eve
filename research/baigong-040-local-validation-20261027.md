@@ -10,7 +10,7 @@ last_updated: "2026-10-27"
 
 ## 基线
 
-- 分支：`baigong/0.40-maintenance`，首轮生产源码基线 `2ad1e002`；首轮测试已提交为 `0e0db683`，第二轮 `7a13231c`、第三轮 `b071061e`；第四轮 `3c71348f`；第五轮 `9008913e`；第六轮测试待用户提交。
+- 分支：`baigong/0.40-maintenance`，首轮生产源码基线 `2ad1e002`；首轮测试已提交为 `0e0db683`，第二轮 `7a13231c`、第三轮 `b071061e`；第四轮 `3c71348f`；第五轮 `9008913e`；第六轮 `142a3e46`；第七轮测试待用户提交。
 - 包版本：`0.40.0-baigong.2`，尚未更新到正式交付目标 `0.40.0-baigong.3`。
 - Node `24.21.0`，pnpm `11.21.0`；core `5.0.0-beta.43`，world-local `5.0.0-beta.37`。
 - 所有命令在仓库根目录执行，使用 WSL Node/pnpm。测试使用 tier config，从新生成的 compiled 加载，不提取压缩私有函数作为替身。
@@ -155,11 +155,31 @@ last_updated: "2026-10-27"
 
 静态审查覆盖暂停位置、失效事件真实提交、门闩 finally 释放及查询结算，未发现阻止提交的问题。验证范围为上述四个交错窗口；不代表所有指令级交错，也未新增生产锁或重复校验。未重复运行未改动的流场景及完整构建。
 
+## 第七轮：waiting 后取消观察与游标续接
+
+基于 142a3e46，修改测试和测试初始化入口，未修改生产逻辑。
+
+核查发现集成测试原先通过 @workflow/world-local 创建 World，没有加载本仓库 world-local 补丁。workflow-setup.ts 现改为 #compiled/@workflow/world-local/index.js；Workflow core 仍通过现有内部 runtime 入口加载。此前集成测试结果仅证明原测试环境行为，不作为 patched World 已验收的依据；之前的生命周期 scenario 本身直接使用 compiled World，不受此问题影响。
+
+新增真实 workflowEntry 对话用例：首轮到达 session.waiting 后记录尾索引，取消并释放观察 reader；通过 dispatchContinuation 向同一 session 发送第二条消息，再从 tail + 1 订阅。验证第二轮包含对应回复并再次到达 session.waiting；没有首轮事件 ID、没有重复事件 ID。该用例验证观察流取消不取消业务会话，并保持续读游标语义。
+
+执行结果：
+
+- 原入口下先运行既有续聊、事件回读 2 项：通过，用于确认现有用例可运行。
+- 改为 compiled World 后执行：
+  pnpm --filter eve exec vitest run --config vitest.integration.config.ts src/execution/workflow-entry.integration.test.ts -t 'parks in conversation mode and resumes via runtime delivery|stamps every stream event with an id that survives a rewind|resumes from the tail after cancelling'
+  结果 3/3 通过、18 项未选中；用例约 12 秒，总计约 54 秒。
+- pnpm --filter eve exec vitest run --config vitest.integration.config.ts src/runtime/host-runtime/acceptance.integration.test.ts：切换入口后复验 2/2 通过，用例约 5 秒，总计约 31 秒。
+- pnpm --filter eve typecheck：通过，复用未变动的 compiled。
+- 两个测试文件定向 oxfmt / oxlint、git diff --check：通过。
+
+静态审查覆盖观察取消与业务取消的区别、尾游标读取、旧事件排除、reader 清理及测试 World 来源，未发现阻止提交的问题。测试使用模拟模型和本地 Workflow 处理器，没有通过 Apps/Agent HTTP 链，也没有调用真实模型。构建输出包含依赖 gray-matter 的 eval 警告和构建插件耗时提示，命令成功退出。
+
 ## 尚未完成
 
-- waiting 后续接及其余端到端取消组合；本轮已覆盖半帧、负索引、两种字节流连接期间取消、磁盘与同进程事件交错和监听器清理。
+- 本地 waiting 续接已验证；HTTP 链取消验证并入下方 Apps → Agent → eve 业务验收。
 - 正式版本 tgz 安装与 Agent Nitro 制品验证、Agent A01/A02 等待预算与错误处理实施。
 - Apps → Agent → eve 的真实取消、延迟受理恢复、租户及现有业务矩阵、固定负载 30 分钟观察。没有执行部署。
 - 仓库规则检查结果单独记录；不得跳过失败或更新契约 baseline 来替代修复。
 
-第六轮测试可单独手动提交；后续按剩余验收项继续，不因本地场景通过关闭 R08。
+第七轮测试可单独手动提交；后续按剩余验收项继续，不因本地场景通过关闭 R08。

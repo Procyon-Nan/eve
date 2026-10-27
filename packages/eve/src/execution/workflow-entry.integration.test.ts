@@ -739,6 +739,75 @@ describe("workflowEntry integration", () => {
     });
   });
 
+  it("resumes from the tail after cancelling a waiting session observer", async () => {
+    const runtime = createTestRuntime({ agent: { name: "workflow-entry-reconnect" } });
+    const continuationToken = "http:workflow-entry-reconnect";
+    await runtime.run(async () => {
+      const run = await start(workflowEntry, [
+        {
+          input: { message: "first request" },
+          serializedContext: buildSerializedContext({
+            channelKind: "http",
+            continuationToken,
+            mode: "conversation",
+          }),
+        },
+      ]);
+      const workflowRuntime = createWorkflowRuntime({
+        compiledArtifactsSource: createBundledRuntimeCompiledArtifactsSource(),
+      });
+      let reader: ReadableStreamDefaultReader<MessageStreamEvent> | undefined;
+      async function readTurn() {
+        const events: MessageStreamEvent[] = [];
+        while (true) {
+          const next = await reader!.read();
+          if (next.done) throw new Error("Stream ended before session.waiting");
+          events.push(next.value);
+          if (next.value.type === "session.waiting") return events;
+        }
+      }
+      try {
+        reader = (await workflowRuntime.getEventStream(run.runId)).getReader();
+        const firstTurn = await readTurn();
+        const tail = await workflowRuntime.getStreamTailIndex(run.runId);
+        expect(tail).toBeGreaterThanOrEqual(0);
+        await reader.cancel("observer disconnected while waiting");
+        reader.releaseLock();
+        reader = undefined;
+
+        await expect(
+          workflowRuntime.dispatchContinuation({
+            continuationToken,
+            command: { auth: null, kind: "send", payload: { message: "second request" } },
+          }),
+        ).resolves.toEqual({ sessionId: run.runId, status: "accepted" });
+
+        reader = (
+          await workflowRuntime.getEventStream(run.runId, {
+            startIndex: tail + 1,
+          })
+        ).getReader();
+        const secondTurn = await readTurn();
+        expect(
+          secondTurn.some(
+            (event) =>
+              event.type === "message.completed" && event.data.message?.includes("second request"),
+          ),
+        ).toBe(true);
+        const oldIds = new Set(firstTurn.map((event) => event.meta.id));
+        expect(secondTurn.every((event) => !oldIds.has(event.meta.id))).toBe(true);
+        expect(new Set(secondTurn.map((event) => event.meta.id)).size).toBe(secondTurn.length);
+        expect(secondTurn.at(-1)?.type).toBe("session.waiting");
+      } finally {
+        if (reader) {
+          await reader.cancel();
+          reader.releaseLock();
+        }
+        await run.cancel();
+      }
+    });
+  });
+
   it("publishes the session ID as the waiting address for an ID-only session", async () => {
     const runtime = createTestRuntime({ agent: { name: "workflow-entry-id-only" } });
 
