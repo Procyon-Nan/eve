@@ -378,6 +378,68 @@ describe("compiled legacy hook preparation", () => {
     });
   });
 
+  it.each([
+    ["entity", "hook_disposed"],
+    ["entity", "run_cancelled"],
+    ["event-index", "hook_disposed"],
+    ["event-index", "run_cancelled"],
+  ] as const)("does not revive a hook when %s lookup overlaps %s", async (source, eventType) => {
+    const dir = await dataDirectory();
+    await legacyHook(dir);
+    const world = worldFor(dir);
+    await world.start!();
+    await world.events.create("wrun_legacy", {
+      eventType: "hook_created",
+      correlationId: "hook_race",
+      eventData: { token: "race-token" },
+    });
+    const entity = join(dir, "hooks", "hook_race.json");
+    const claim = claimPath(dir, "race-token");
+    if (source === "event-index") {
+      await fs.unlink(claim);
+    }
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const original = fs.readFile.bind(fs);
+    let held = false;
+    vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      const path = String(args[0]);
+      const matches =
+        source === "entity"
+          ? path === entity
+          : path.startsWith(join(dir, "events") + "/") && path.endsWith(".json");
+      if (!held && matches) {
+        held = true;
+        entered.resolve();
+        await gate.promise;
+      }
+      return result;
+    });
+    const lookup = world.hooks.getByToken("race-token").then(
+      (hook) => ({ hook }),
+      (error: unknown) => ({ error }),
+    );
+    try {
+      await entered.promise;
+      await world.events.create(
+        "wrun_legacy",
+        eventType === "hook_disposed"
+          ? { eventType, correlationId: "hook_race", eventData: { token: "race-token" } }
+          : { eventType },
+      );
+    } finally {
+      gate.resolve();
+      await lookup;
+    }
+    await expect(lookup).resolves.toMatchObject({ error: { name: "HookNotFoundError" } });
+    await expect(world.hooks.getByToken("race-token")).rejects.toMatchObject({
+      name: "HookNotFoundError",
+    });
+    await expect(fs.access(claim)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(entity)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("does not return a cached hook after its run becomes terminal", async () => {
     const dir = await dataDirectory();
     await legacyHook(dir);
