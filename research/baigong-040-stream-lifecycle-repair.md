@@ -23,8 +23,8 @@ last_updated: 2026-10-27
 | R02  | Workflow 读取器取消与迟到连接清理       | 已实现并静态审查 | `17b7f1f7`     | 待验证   |
 | R03  | world-local 文件读取、去重和异常清理    | 已实现并静态审查 | `196ade9a`     | 待验证   |
 | R04  | eve NDJSON 清理、纯元数据尾索引查询     | 已实现并静态审查 | `fb2a4606`     | 待验证   |
-| R05  | 合并受理回执等待                        | 已实现并静态审查 | 待用户提交     | 待验证   |
-| R06  | hook 查询使用现有索引，兼容历史数据     | 待执行           | —              | 待验证   |
+| R05  | 合并受理回执等待                        | 已实现并静态审查 | `ccbf0928`     | 待验证   |
+| R06  | hook 查询使用现有索引，兼容历史数据     | 已实现并静态审查 | 待用户提交     | 待验证   |
 | R07  | 受理阶段计时及 Agent 等待预算、错误保留 | 待执行           | —              | 待验证   |
 | R08  | 最终构建、制品及业务验收                | 待执行           | —              | 待验证   |
 | R09  | 版本、交付、部署观察                    | 待执行           | —              | 待验证   |
@@ -97,7 +97,7 @@ last_updated: 2026-10-27
 
 ## R06：新 token 查询不扫描全部历史 hook
 
-补丁落在 world-local 的 `dist/storage/hooks-storage.js`、`dist/storage/hook-index.js`，由现有 `world-local.mjs` 接入；启动准备接入依赖 `dist/index.js` 的 `start()`。
+补丁落在 world-local 的 `dist/storage/hooks-storage.js`、`dist/storage/hook-index.js`、`dist/storage/events-storage.js`，由现有 `world-local.mjs` 接入；启动准备接入依赖 `dist/index.js` 的 `start()`。
 
 直接复用现有 token claim、token-index、id-index、by-run 索引：
 
@@ -108,6 +108,10 @@ last_updated: 2026-10-27
 5. 首次部署在服务停止、数据已备份的条件下启动。读取失败或补齐失败不放行就绪；重试可幂等续做。旧实体、回执和事件不删除、不改写，旧版本仍可读取补齐后的数据。
 
 **审查重点：** 新 token 查询的历史实体读取量在准备完成后为零；只允许访问该 token 的记录。100、1000 个历史 hook 下均成立。旧数据丢失 claim、只有实体、带 tag、保留期内终态、disposed、并发创建均有明确结果。启动扫描成本与在线请求成本分开统计。
+
+2026-10-27 实施记录：新增 `world-local-hook-index.mjs` 并接入 vendoring。删除 token miss 的全实体扫描，保留 claim 查询和按 token 的事件索引恢复。启动、直接 token 查询及 hook 创建等待同一份按数据目录和 tag 区分的准备 Promise；创建入口在获取 hook 锁前等待准备，避免等待链互锁。准备使用原生跨进程 token 锁，为有效历史实体补齐 claim；同 owner 的旧 claim 缺少 hookId 时补齐该字段，不伪造 eventId，不覆盖不同 owner 的 claim。不同 owner 的现存 claim 一律报告冲突并停止准备，不在启动迁移中自动裁决或删除。保留 tag 可见性、保留期及 disposal 判断，写入后重新确认有效性；clear 清除准备缓存，失败允许重试。不增加数据库或持久准备标记。
+
+现有索引补齐只忽略原生不安全 ID 错误，其余写入错误向上传播，避免失败后仍写完成标记。静态审查覆盖索引 miss 路径、准备与创建的锁顺序、历史 claim 格式、tag 回退和失败传播；未发现阻止本项提交的问题。仅完成补丁脚本语法与 diff 空白检查，补丁应用、构建、并发及真实文件行为统一留待 R08 验收。
 
 ## R07：受理预算与定位闭环
 

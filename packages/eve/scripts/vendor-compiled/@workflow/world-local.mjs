@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 import { loadDeclaration } from "../_shared.mjs";
+import { patchWorldLocalHookIndex } from "./world-local-hook-index.mjs";
 import { patchWorldLocalStreamLifecycle } from "./world-local-stream-lifecycle.mjs";
 
 const require = createRequire(import.meta.url);
@@ -65,5 +66,6 @@ export default {
   plugins: [
     workflowWorldLocalVersionPlugin,
     patchWorldLocalStreamLifecycle(workflowWorldLocalVersion),
+    patchWorldLocalHookIndex(workflowWorldLocalVersion),
   ],
 };
