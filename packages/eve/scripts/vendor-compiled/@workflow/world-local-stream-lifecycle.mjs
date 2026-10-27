@@ -57,8 +57,8 @@ const streamGetSource = `            async get(_runId, name, startIndex = 0) {
                         };
                         const closeListener = () => {
                             if (streamClosed) return;
-                            if (isReadingFromDisk) pendingClose = true;
-                            else finish();
+                            pendingClose = true;
+                            if (!isReadingFromDisk) void poll();
                         };
                         teardown = () => {
                             streamEmitter.off(\`chunk:\${name}\`, chunkListener);
@@ -86,17 +86,19 @@ const streamGetSource = `            async get(_runId, name, startIndex = 0) {
                         async function poll() {
                             if (streamClosed || isReadingFromDisk) return;
                             isReadingFromDisk = true;
+                            pendingClose = false;
                             try {
                                 const { files, extMap, dir } = await listChunkFilesForStream(chunksBaseDir, name, tag);
                                 if (streamClosed) return;
                                 const complete = await readChunks(files, extMap, dir);
                                 if (streamClosed) return;
                                 flushBufferedEvents();
-                                if (complete || pendingClose) finish();
+                                if (complete) finish();
                             } catch (error) {
                                 fail(error);
                             } finally {
                                 isReadingFromDisk = false;
+                                if (pendingClose && !streamClosed) void poll();
                             }
                         }
 
@@ -124,12 +126,13 @@ const streamGetSource = `            async get(_runId, name, startIndex = 0) {
                             const complete = await readChunks(files.slice(resolvedStartIndex), extMap, dir);
                             if (streamClosed) return;
                             flushBufferedEvents();
-                            if (complete || pendingClose) {
+                            if (complete) {
                                 finish();
                                 return;
                             }
                             isReadingFromDisk = false;
                             pollInterval = setInterval(poll, 100);
+                            if (pendingClose) void poll();
                         } catch (error) {
                             fail(error);
                         }

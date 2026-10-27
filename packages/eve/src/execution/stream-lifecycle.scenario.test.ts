@@ -245,6 +245,71 @@ describe("compiled local stream lifecycle", () => {
     },
   );
 
+  it("delivers concurrent local and external writes once and preserves each writer's order", async () => {
+    const { world, dataDir } = await localWorld();
+    const reader = (await world.streams.get("wrun_audit", "multi-writer", 0)).getReader();
+    const values: string[] = [];
+    const reading = (async () => {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) return;
+        values.push(new TextDecoder().decode(next.value));
+      }
+    })();
+    const compiledWorld = new URL(
+      "../../.generated/compiled/@workflow/world-local/index.js",
+      import.meta.url,
+    ).href;
+    const external = promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+          const { createWorld } = await import(process.argv[1]);
+          const world = createWorld({ dataDir: process.argv[2], recoverActiveRuns: false });
+          try {
+            await world.streams.write('wrun_audit', 'multi-writer', 'external-0');
+            console.log('ready');
+            for (let i = 1; i < 20; i++) {
+              await world.streams.write('wrun_audit', 'multi-writer', 'external-' + i);
+            }
+          } finally { await world.close(); }
+        `,
+        compiledWorld,
+        dataDir,
+      ],
+      { timeout: 15_000 },
+    );
+    const local = (async () => {
+      await new Promise<void>((resolve, reject) => {
+        external.child.stdout!.once("data", () => resolve());
+        external.then(() => reject(new Error("Writer exited before readiness")), reject);
+      });
+      for (let i = 0; i < 20; i++) {
+        await world.streams.write("wrun_audit", "multi-writer", `local-${i}`);
+      }
+    })();
+    try {
+      const writers = await Promise.allSettled([external, local]);
+      for (const result of writers) {
+        if (result.status === "rejected") throw result.reason;
+      }
+      await world.streams.close("wrun_audit", "multi-writer");
+      await reading;
+      expect(values).toHaveLength(40);
+      for (const writer of ["local", "external"]) {
+        expect(values.filter((value) => value.startsWith(writer))).toEqual(
+          Array.from({ length: 20 }, (_, index) => `${writer}-${index}`),
+        );
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      await reading.catch(() => {});
+      reader.releaseLock();
+    }
+  });
+
   it("delivers persisted chunks in order and reaches real EOF", async () => {
     const { world } = await localWorld();
     await world.streams.write("wrun_audit", "complete", "first");
