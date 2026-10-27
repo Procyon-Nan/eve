@@ -76,9 +76,9 @@ describe("host runtime acceptance receipts", () => {
         expect.objectContaining({ runId: "receipt-run" }),
         "ACCEPTED",
       );
-      expect(getRun).toHaveBeenCalledWith("receipt-run");
+      expect(getRun).not.toHaveBeenCalled();
       await expect(queryHostRuntimeAcceptance("command-1")).resolves.toBe("ACCEPTED");
-      expect(getWorld).toHaveBeenCalledTimes(2);
+      expect(getWorld).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -156,5 +156,31 @@ describe("host runtime acceptance receipts", () => {
         HostRuntimeAcceptanceIndeterminateError,
       );
     });
+  });
+  it("stops receipt polling at the deadline and allows a later durable recovery", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn(async () => ({
+      attributes: { [HOST_RUNTIME_ACCEPTANCE_STATUS_ATTRIBUTE]: "INDETERMINATE" },
+    }));
+    vi.mocked(getWorld).mockResolvedValue({ runs: { get } } as never);
+    try {
+      const result = recordHostRuntimeAcceptance("late-receipt", "ACCEPTED").catch(
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await result).toBeInstanceOf(HostRuntimeAcceptanceIndeterminateError);
+      const readsAtTimeout = get.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(get).toHaveBeenCalledTimes(readsAtTimeout);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(getRun).not.toHaveBeenCalled();
+      get.mockResolvedValue({
+        attributes: { [HOST_RUNTIME_ACCEPTANCE_STATUS_ATTRIBUTE]: "ACCEPTED" },
+      });
+      await expect(queryHostRuntimeAcceptance("late-receipt")).resolves.toBe("ACCEPTED");
+      expect(resumeHook).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

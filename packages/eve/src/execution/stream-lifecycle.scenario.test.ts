@@ -1,0 +1,196 @@
+import fs from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createWorld } from "#compiled/@workflow/world-local/index.js";
+import { getRun, setWorld } from "#internal/workflow/runtime.js";
+
+const roots: string[] = [];
+const worlds: ReturnType<typeof createWorld>[] = [];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function localWorld() {
+  const dataDir = await fs.mkdtemp(join(tmpdir(), "eve-stream-repair-"));
+  roots.push(dataDir);
+  const world = createWorld({ dataDir, recoverActiveRuns: false });
+  worlds.push(world);
+  return { world, dataDir };
+}
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  setWorld(undefined);
+  for (const world of worlds.splice(0)) await world.close?.();
+  for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
+});
+
+describe("compiled local stream lifecycle", () => {
+  it.each(["workflow", "world"] as const)(
+    "releases %s readers after 20 non-EOF cancellations",
+    async (mode) => {
+      const { world } = await localWorld();
+      setWorld(world);
+      const intervals = new Set<ReturnType<typeof setInterval>>();
+      const originalSetInterval = globalThis.setInterval;
+      const originalClearInterval = globalThis.clearInterval;
+      vi.spyOn(globalThis, "setInterval").mockImplementation(((
+        ...args: Parameters<typeof setInterval>
+      ) => {
+        const timer = originalSetInterval(...args);
+        intervals.add(timer);
+        return timer;
+      }) as typeof setInterval);
+      vi.spyOn(globalThis, "clearInterval").mockImplementation((timer) => {
+        intervals.delete(timer as ReturnType<typeof setInterval>);
+        originalClearInterval(timer);
+      });
+      const get = vi.spyOn(world.streams, "get");
+      const readdir = vi.spyOn(fs, "readdir");
+      try {
+        for (let index = 0; index < 20; index++) {
+          const stream =
+            mode === "workflow"
+              ? getRun("wrun_audit").getReadable({ namespace: `stream-${index}`, startIndex: 0 })
+              : await world.streams.get("wrun_audit", `stream-${index}`, 0);
+          const reader = stream.getReader();
+          const pending = reader.read();
+          await vi.waitFor(() => expect(intervals.size).toBe(1));
+          await reader.cancel("consumer disconnected");
+          await expect(pending).resolves.toMatchObject({ done: true });
+          reader.releaseLock();
+          await vi.waitFor(() => expect(intervals.size).toBe(0));
+        }
+        const reads = readdir.mock.calls.length;
+        await sleep(250);
+        expect(readdir).toHaveBeenCalledTimes(reads);
+        expect(get).toHaveBeenCalledTimes(20);
+        for (const result of get.mock.results) {
+          expect((await result.value).locked).toBe(false);
+        }
+      } finally {
+        for (const timer of intervals) originalClearInterval(timer);
+      }
+    },
+  );
+
+  it.each(["initial", "reconnect"] as const)(
+    "cleans a late %s connection after cancellation",
+    async (phase) => {
+      const { world } = await localWorld();
+      setWorld(world);
+      const gate = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      const rawGet = world.streams.get.bind(world.streams);
+      let late: ReadableStream<Uint8Array> | undefined;
+      let attempts = 0;
+      vi.spyOn(world.streams, "getInfo").mockResolvedValue({ done: false, tailIndex: -1 });
+      const get = vi.spyOn(world.streams, "get").mockImplementation(async (...args) => {
+        attempts++;
+        if (phase === "reconnect" && attempts === 1) {
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        }
+        entered.resolve();
+        await gate.promise;
+        late = await rawGet(...args);
+        return late;
+      });
+      const reader = getRun("wrun_audit").getReadable().getReader();
+      const pending = reader.read();
+      await entered.promise;
+      const cancelled = reader.cancel();
+      gate.resolve();
+      await cancelled;
+      await expect(pending).resolves.toMatchObject({ done: true });
+      reader.releaseLock();
+      await vi.waitFor(() => {
+        expect(late).toBeDefined();
+        expect(late!.locked).toBe(false);
+      });
+      const reads = vi.spyOn(fs, "readdir");
+      await sleep(250);
+      expect(reads).not.toHaveBeenCalled();
+      expect(get).toHaveBeenCalledTimes(phase === "initial" ? 1 : 2);
+    },
+  );
+
+  it("delivers persisted chunks in order and reaches real EOF", async () => {
+    const { world } = await localWorld();
+    await world.streams.write("wrun_audit", "complete", "first");
+    await world.streams.write("wrun_audit", "complete", "second");
+    await world.streams.close("wrun_audit", "complete");
+    const reader = (await world.streams.get("wrun_audit", "complete", 0)).getReader();
+    const values: string[] = [];
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        values.push(new TextDecoder().decode(result.value));
+      }
+      expect(values).toEqual(["first", "second"]);
+    } finally {
+      reader.releaseLock();
+    }
+  });
+
+  it.each(["EIO", "EACCES"])("reports %s instead of skipping an unreadable chunk", async (code) => {
+    const { world } = await localWorld();
+    await world.streams.write("wrun_audit", "broken-stream", "first");
+    await world.streams.write("wrun_audit", "broken-stream", "second");
+    await world.streams.close("wrun_audit", "broken-stream");
+    const original = fs.readFile.bind(fs);
+    const failure = Object.assign(new Error("injected read failure"), { code });
+    vi.spyOn(fs, "readFile").mockImplementation((...args) => {
+      if (String(args[0]).endsWith(".bin")) return Promise.reject(failure);
+      return original(...args);
+    });
+    const reader = (await world.streams.get("wrun_audit", "broken-stream", 0)).getReader();
+    try {
+      await expect(reader.read()).rejects.toMatchObject({ code });
+    } finally {
+      reader.releaseLock();
+    }
+  });
+
+  it.each([100, 1000])(
+    "prepares %s legacy hooks once and avoids entity reads on online misses",
+    async (count) => {
+      const { world, dataDir } = await localWorld();
+      await fs.mkdir(join(dataDir, "hooks"), { recursive: true });
+      await Promise.all(
+        Array.from({ length: count }, (_, index) =>
+          fs.writeFile(
+            join(dataDir, "hooks", `hook_${index}.json`),
+            JSON.stringify({
+              runId: "wrun_audit",
+              hookId: `hook_${index}`,
+              token: `legacy-${index}`,
+              createdAt: new Date().toISOString(),
+              ownerId: "local-owner",
+              projectId: "local-project",
+              environment: "local",
+              specVersion: 6,
+              isWebhook: false,
+              isSystem: false,
+            }),
+          ),
+        ),
+      );
+      await world.start?.();
+      await expect(world.hooks.getByToken("legacy-0")).resolves.toMatchObject({ hookId: "hook_0" });
+      const reads = vi.spyOn(fs, "readFile");
+      for (let index = 0; index < 2; index++) {
+        await expect(world.hooks.getByToken("missing-token")).rejects.toMatchObject({
+          name: "HookNotFoundError",
+        });
+      }
+      expect(reads.mock.calls.filter(([file]) => /\/hooks\/hook_/.test(String(file)))).toHaveLength(
+        0,
+      );
+    },
+  );
+});

@@ -1,0 +1,63 @@
+---
+issue: "baigongapps 报告 180；eve 0.40 修复本地验证"
+status: in-progress
+last_updated: "2026-10-27"
+---
+
+# eve 0.40 修复本地首轮验收记录
+
+结论：当前本地构建和定向行为验证通过，R08 尚未完成，不具备发布或宣称业务无回归的条件。本轮没有修改生产源码，没有增加阶段计时。
+
+## 基线
+
+- 分支：`baigong/0.40-maintenance`，生产源码 HEAD `2ad1e002`；本轮新增及更新的测试尚待用户提交。
+- 包版本：`0.40.0-baigong.2`，尚未更新到正式交付目标 `0.40.0-baigong.3`。
+- Node `24.21.0`，pnpm `11.21.0`；core `5.0.0-beta.43`，world-local `5.0.0-beta.37`。
+- 所有命令在仓库根目录执行，使用 WSL Node/pnpm。测试使用 tier config，从新生成的 compiled 加载，不提取压缩私有函数作为替身。
+- 安装依赖已在 R01 完成，本轮未重复安装或访问生产服务。
+
+## 已执行
+
+| 命令                                                                                                                                                                                      | 结果                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `pnpm --filter eve build:compiled`                                                                                                                                                        | 通过，依赖版本和补丁替换检查通过                           |
+| `pnpm --filter eve build`                                                                                                                                                                 | 通过，包含生产声明生成、JS 打包、compiled 复制及版本替换   |
+| `pnpm --filter eve exec vitest run --config vitest.unit.config.ts src/execution/ndjson-stream.test.ts src/execution/workflow-runtime.test.ts src/runtime/host-runtime/acceptance.test.ts` | 48/48 通过                                                 |
+| `pnpm --filter eve exec vitest run --config vitest.integration.config.ts src/runtime/host-runtime/acceptance.integration.test.ts`                                                         | 2/2 通过，真实受理并发所有权及未决状态冷启动               |
+| `pnpm --filter eve exec vitest run --config vitest.scenario.config.ts src/execution/stream-lifecycle.scenario.test.ts`                                                                    | 9/9 通过，约 5 秒用例执行时间；scenario setup 另有打包时间 |
+| `pnpm --filter eve exec tsc -p tsconfig.json --noEmit`                                                                                                                                    | 通过，包含本轮测试                                         |
+| 定向 `oxfmt` / `oxlint`、`git diff --check`                                                                                                                                               | 通过                                                       |
+| `pnpm guard:invariants`                                                                                                                                                                   | 修正文档日期、runtime 导入和工作区换行后通过               |
+| `pnpm --filter eve typecheck`                                                                                                                                                             | 初次因 CRLF 输入校验失败；工作区换行修正后完整命令通过     |
+
+`pnpm guard:invariants` 首次报告文档日期、测试 runtime 导入和六项扩展契约报告不匹配。已修正文档日期及导入；契约报告转换为 LF 后六项不匹配消失，完整规则检查通过。没有重生成契约或修改 epoch，这些报错不代表扩展 API 发生变化。
+
+标准 typecheck 的阻断已独立定位：在临时目录运行同一模板生成器，当前生成结果与已提交模板仅有嵌入字符串中的 `\r` 差异，移除该差异后二者相同。原因是工作区 CRLF 源文件被生成器原样嵌入，不涉及本轮修改的文件。已将受影响的 tracked registry 源文件、模板输出和契约报告在工作区转换为 LF（共 123 个文件），Git 内容差异没有新增这些文件；未改生成器、契约内容或 epoch。随后标准 typecheck 完整通过。
+
+构建目录指纹（非 tgz 哈希）：按相对路径排序，对每个文件追加 UTF-8 相对路径、NUL、该文件 SHA-256 原始 32 字节，再计算整体 SHA-256。
+
+- `.generated/compiled`：436 文件，`f68f04731971af117f23597c29a96798d5c41b7b8556851e206640c64dafc536`。
+- `dist`：3312 文件，`99435fbddfb1c2beadb5c77737571d1d383a71bb52b604f2a0de8e2a9517ba06`。
+
+## 行为结果与审查
+
+- 修正旧回执用例仍要求 `getRun().returnValue` 的断言；持久回执查询仍作为确认依据。
+- 新增假时钟回归：30 秒截止后返回不确定，再推进 60 秒没有新增查询和遗留计时器；随后持久回执变为 ACCEPTED 时可恢复，提交仅一次。
+- NDJSON 非法输入取消未结束源流；即使取消清理抛错，仍向消费者报告原始 SyntaxError，源 reader 锁释放。
+- 尾索引 -1、0、9 各查询 20 次，无实时 reader 创建。
+- 使用实际 compiled `getRun().getReadable()` 和 world-local reader，各执行 20 次非 EOF 取消。原生 pipeThrough 的上游取消异步传播后，文件轮询归零；再观察 250ms 无新增目录扫描、无重连，已打开源流全部解锁。没有把公共流 cancel 返回瞬间等同于整条 pipe 链清理完成。
+- 初次连接与重连在取消后迟到，迟到源流解锁；后续观察无目录扫描或额外连接。
+- 实际文件持久块按 first、second 顺序交付并结束于 EOF；注入 EIO/EACCES 时当前读取报错，不跳到后面的块。
+- 100 和 1000 个只有实体的旧 hook 在启动准备后可查询；准备完成后连续查询缺失 token，不读取历史 hook 实体文件。
+- 新增 5 个单测参数实例在 `b55fdd3d` 对应的修复前生产源码上均因预期旧行为失败：不取消源流、尾索引创建 reader、以 returnValue 代替持久回执。已恢复修复源码并重跑 48 项全部通过。
+- 静态审查确认只添加行为测试、更新旧断言和文档，不增加产品开关、测试专用生产出口或额外监控机制。
+
+## 尚未完成
+
+- 完整取消矩阵：EOF 元数据等待、字节流特殊路径、半帧及负游标重连等；文件轮询期间错误、真实双进程交错写入和监听器基线。
+- hook 的 tag、保留期、disposed、多 owner 冲突、跨进程创建及重启组合；目前规模测试只证明启动准备后的在线 miss 路径。
+- 正式版本 tgz 安装与 Agent Nitro 制品验证、Agent A01/A02 等待预算与错误处理实施。
+- Apps → Agent → eve 的真实取消、延迟受理恢复、租户及现有业务矩阵、固定负载 30 分钟观察。没有执行部署。
+- 仓库规则检查结果单独记录；不得跳过失败或更新契约 baseline 来替代修复。
+
+本轮测试可单独手动提交；后续按剩余验收项继续，不因首轮通过关闭 R08。

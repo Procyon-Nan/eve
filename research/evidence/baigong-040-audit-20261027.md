@@ -1,7 +1,7 @@
 ---
 issue: "baigongapps 报告 180；2026-10-27 流与受理链核查"
 status: evidence
-last_updated: 2026-10-27
+last_updated: "2026-10-27"
 ---
 
 > 调查材料归档。原文件：`/tmp/eve-stream-audit-20261027/findings.md`。

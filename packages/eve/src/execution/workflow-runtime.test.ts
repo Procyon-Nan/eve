@@ -772,3 +772,23 @@ async function readAll<T>(stream: ReadableStream<T>): Promise<T[]> {
   for await (const value of stream) values.push(value);
   return values;
 }
+
+describe("workflow stream tail metadata", () => {
+  it.each([-1, 0, 9])("returns tail %s without opening a live reader", async (tailIndex) => {
+    const getInfo = vi.fn(async () => ({ tailIndex, done: false }));
+    const get = vi.fn(() => {
+      throw new Error("must not open a reader");
+    });
+    getRunMock.mockReturnValue({ getReadable: get });
+    getWorldMock.mockResolvedValue({ streams: { getInfo, get } });
+    const runtime = createWorkflowRuntime({
+      compiledArtifactsSource: {} as RuntimeCompiledArtifactsSource,
+    });
+    for (let index = 0; index < 20; index++) {
+      await expect(runtime.getStreamTailIndex("wrun_tail")).resolves.toBe(tailIndex);
+    }
+    expect(getInfo).toHaveBeenCalledTimes(20);
+    expect(get).not.toHaveBeenCalled();
+    expect(getRunMock).not.toHaveBeenCalled();
+  });
+});

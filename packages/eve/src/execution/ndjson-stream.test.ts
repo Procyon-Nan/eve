@@ -100,4 +100,19 @@ describe("parseNdjsonStream", () => {
 
     await expect(drain(parseNdjsonStream(() => source))).rejects.toThrow("source exploded");
   });
+  it("cancels an open malformed source and preserves the parse error if cleanup fails", async () => {
+    let cancellations = 0;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("not-json\n"));
+      },
+      cancel() {
+        cancellations++;
+        throw new Error("cleanup failed");
+      },
+    });
+    await expect(drain(parseNdjsonStream(() => source))).rejects.toBeInstanceOf(SyntaxError);
+    expect(cancellations).toBe(1);
+    expect(source.locked).toBe(false);
+  });
 });
