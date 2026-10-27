@@ -10,7 +10,7 @@ last_updated: "2026-10-27"
 
 ## 基线
 
-- 分支：`baigong/0.40-maintenance`，首轮生产源码基线 `2ad1e002`；首轮测试已提交为 `0e0db683`，第二轮 `7a13231c`、第三轮 `b071061e`；第四轮修复待用户提交。
+- 分支：`baigong/0.40-maintenance`，首轮生产源码基线 `2ad1e002`；首轮测试已提交为 `0e0db683`，第二轮 `7a13231c`、第三轮 `b071061e`；第四轮 `3c71348f`；第五轮测试待用户提交。
 - 包版本：`0.40.0-baigong.2`，尚未更新到正式交付目标 `0.40.0-baigong.3`。
 - Node `24.21.0`，pnpm `11.21.0`；core `5.0.0-beta.43`，world-local `5.0.0-beta.37`。
 - 所有命令在仓库根目录执行，使用 WSL Node/pnpm。测试使用 tier config，从新生成的 compiled 加载，不提取压缩私有函数作为替身。
@@ -117,12 +117,30 @@ last_updated: "2026-10-27"
 
 静态审查确认原生 close 在持久 EOF 写入完成后才发送通知；补读复用现有 poll，读盘互斥、取消后禁止重启及失败清理继续有效。未发现阻止本批提交的问题。此项不代替全部调度组合、跨进程 hook 竞争或业务验收。
 
+## 第五轮：跨进程 hook 创建与准备竞争
+
+基于 3c71348f，仅扩展 hook-lifecycle.scenario.test.ts，未修改生产逻辑。
+
+- 在父进程持有历史 token claim 锁、读取 claim 时暂停准备。
+- 独立 Node 进程调用真实 compiled World 的 events.create，创建同 token、不同 owner 的 hook。
+- 子进程观察真实 mkdir 锁操作的 EEXIST 后通知父进程；不模拟锁结果，不依赖固定睡眠制造竞争。父进程随后放行准备。
+- 创建返回 hook_conflict，conflictingRunId 为原 run；hooks.getByToken 和持久 claim 均保留原 runId/hookId。
+- gate 在 finally 中释放，并等待准备和子进程结算；子进程设 15 秒超时，World 和临时目录沿用现有清理。
+
+验证结果：
+
+- pnpm --filter eve exec vitest run --config vitest.scenario.config.ts src/execution/hook-lifecycle.scenario.test.ts：12/12 通过，用例约 1 秒，总计约 26 秒。
+- pnpm --filter eve typecheck：通过，复用未变动的 compiled。
+- 定向 oxfmt / oxlint、git diff --check：通过。
+
+静态审查覆盖跨进程锁竞争的实际触发、所有权断言、子进程退出与门闩释放，未发现阻止提交的问题。本轮未重复运行流场景或完整构建；第四轮结果保留原执行边界。运行期 disposal/终态转换与查询交错仍待覆盖。
+
 ## 尚未完成
 
 - waiting 后续接及其余端到端取消组合；本轮已覆盖半帧、负索引、两种字节流连接期间取消、磁盘与同进程事件交错和监听器清理。
-- 跨进程 hook_created 与准备竞争、运行期 disposal/终态转换与查询并发交错；本轮覆盖同进程创建与准备竞争，以及先后发生的 disposal/终态转换和事件索引恢复，不代表所有并发组合。
+- 运行期 disposal/终态转换与查询并发交错；已覆盖同进程和跨进程创建与准备竞争，以及先后发生的 disposal/终态转换和事件索引恢复，不代表所有并发组合。
 - 正式版本 tgz 安装与 Agent Nitro 制品验证、Agent A01/A02 等待预算与错误处理实施。
 - Apps → Agent → eve 的真实取消、延迟受理恢复、租户及现有业务矩阵、固定负载 30 分钟观察。没有执行部署。
 - 仓库规则检查结果单独记录；不得跳过失败或更新契约 baseline 来替代修复。
 
-第四轮修复与测试可单独手动提交；后续按剩余验收项继续，不因本地场景通过关闭 R08。
+第五轮测试可单独手动提交；后续按剩余验收项继续，不因本地场景通过关闭 R08。

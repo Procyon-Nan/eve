@@ -265,6 +265,91 @@ describe("compiled legacy hook preparation", () => {
     });
   });
 
+  it("preserves legacy ownership when another process creates the same token during preparation", async () => {
+    const dir = await dataDirectory();
+    await legacyHook(dir);
+    await legacyHook(dir, {
+      runId: "wrun_competitor",
+      hookId: "hook_existing",
+      token: "other-token",
+    });
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const original = fs.readFile.bind(fs);
+    let held = false;
+    vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+      if (!held && String(args[0]) === claimPath(dir)) {
+        held = true;
+        entered.resolve();
+        await gate.promise;
+      }
+      return original(...args);
+    });
+    const world = worldFor(dir);
+    const preparing = world.start!();
+    await entered.promise;
+    const creating = execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+          const fs = (await import('node:fs')).default;
+          const mkdir = fs.mkdir;
+          fs.mkdir = function (path, ...args) {
+            const callback = args.pop();
+            return mkdir.call(this, path, ...args, (error, ...values) => {
+              if (String(path) === process.argv[3] + '.lock' && error?.code === 'EEXIST') {
+                fs.mkdir = mkdir;
+                console.log('blocked');
+              }
+              callback(error, ...values);
+            });
+          };
+          const { createWorld } = await import(process.argv[1]);
+          const world = createWorld({ dataDir: process.argv[2], recoverActiveRuns: false });
+          try {
+            const pending = world.events.create('wrun_competitor', {
+              eventType: 'hook_created',
+              correlationId: 'hook_competitor',
+              eventData: { token: 'legacy-token' },
+            });
+            const result = await pending;
+            console.log(JSON.stringify(result.event));
+          } finally { await world.close(); }
+        `,
+        compiledWorldUrl,
+        dir,
+        claimPath(dir),
+      ],
+      { timeout: 15_000 },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        creating.child.stdout!.once("data", () => resolve());
+        creating.then(() => reject(new Error("Creator exited before lock contention")), reject);
+      });
+    } finally {
+      gate.resolve();
+      await Promise.allSettled([preparing, creating]);
+    }
+    await preparing;
+    const { stdout } = await creating;
+    expect(stdout.split("\n")[0]).toBe("blocked");
+    expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toMatchObject({
+      eventType: "hook_conflict",
+      eventData: { conflictingRunId: "wrun_legacy" },
+    });
+    await expect(world.hooks.getByToken("legacy-token")).resolves.toMatchObject({
+      runId: "wrun_legacy",
+      hookId: "hook_legacy",
+    });
+    expect(JSON.parse(await fs.readFile(claimPath(dir), "utf8"))).toMatchObject({
+      runId: "wrun_legacy",
+      hookId: "hook_legacy",
+    });
+  });
+
   it("recovers a missing entity and claim from the token event index", async () => {
     const dir = await dataDirectory();
     await legacyHook(dir);
