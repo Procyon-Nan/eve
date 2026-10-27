@@ -1,6 +1,7 @@
 import * as workflowRuntime from "#compiled/@workflow/core/runtime.js";
 
 export * from "#compiled/@workflow/core/runtime.js";
+export { getWorkflowRunStreamId } from "#compiled/@workflow/core/util.js";
 export type {
   StartOptionsWithoutDeploymentId,
   WorkflowFunction,

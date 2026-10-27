@@ -2,19 +2,9 @@
  * Transforms a byte stream of newline-delimited JSON (NDJSON) into a
  * stream of parsed values.
  *
- * The byte stream is produced lazily by `createByteStream`, so the
- * underlying source (a world-local run readable) is only opened when the
- * returned stream is consumed.
- *
- * Cancellation is forwarded to the source. When the returned stream is
- * cancelled — e.g. an SSE client disconnects and the server cancels the
- * response body — the underlying reader is cancelled too. This matters for
- * runs that never reach EOF: a parked (`session.waiting`) durable run keeps
- * its event stream open indefinitely, and the world-local streamer runs a
- * filesystem poll until its reader is cancelled. Without forwarding the
- * cancel, the read loop below would block on `reader.read()` forever and
- * that poll would leak for the life of the process, degrading streaming
- * throughput for every other session.
+ * Opens the source when the parsed stream is created. Cancellation and
+ * parsing failures cancel the source before releasing its reader lock:
+ * releasing the lock alone would leave a waiting session's file poll alive.
  */
 export function parseNdjsonStream<T>(
   createByteStream: () => ReadableStream<Uint8Array>,
@@ -23,15 +13,25 @@ export function parseNdjsonStream<T>(
   let buffer = "";
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let cancelled = false;
+  let sourceCancellation: Promise<void> | undefined;
+
+  function cancelSource(reason: unknown): Promise<void> {
+    return (sourceCancellation ??= reader?.cancel(reason) ?? Promise.resolve());
+  }
 
   return new ReadableStream<T>({
     async start(controller) {
-      reader = createByteStream().getReader();
+      let reachedEof = false;
       try {
+        reader = createByteStream().getReader();
         while (true) {
           const { value, done } = await reader.read();
 
-          if (done) break;
+          if (cancelled) return;
+          if (done) {
+            reachedEof = true;
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
 
@@ -49,10 +49,6 @@ export function parseNdjsonStream<T>(
           }
         }
 
-        // A cancel resolves the pending read with `done`; bail before
-        // touching the controller, which the cancel has already closed.
-        if (cancelled) return;
-
         buffer += decoder.decode();
         const trailing = buffer.trim();
         if (trailing.length > 0) {
@@ -60,14 +56,20 @@ export function parseNdjsonStream<T>(
         }
         controller.close();
       } catch (error) {
+        if (!cancelled && !reachedEof && reader) {
+          // Cleanup must not replace the parsing/read error.
+          await cancelSource(error).catch(() => {});
+        }
         if (!cancelled) controller.error(error);
       } finally {
-        reader.releaseLock();
+        // A cancelled read can settle before the source's asynchronous cleanup.
+        await sourceCancellation?.catch(() => {});
+        reader?.releaseLock();
       }
     },
-    async cancel(reason) {
+    cancel(reason) {
       cancelled = true;
-      await reader?.cancel(reason);
+      return cancelSource(reason);
     },
   });
 }

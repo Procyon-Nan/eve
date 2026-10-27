@@ -30,6 +30,8 @@ import { SpanKind, trace } from "#compiled/@opentelemetry/api/index.js";
 import {
   getHookByToken,
   getRun,
+  getWorkflowRunStreamId,
+  getWorld,
   start,
   type Run,
   type StartOptionsWithoutDeploymentId,
@@ -243,13 +245,9 @@ export function createWorkflowRuntime(config: {
     },
 
     async getStreamTailIndex(sessionId: string): Promise<number> {
-      // The readable is never consumed; cancel it so the unread source does not linger.
-      const readable = getRun(sessionId).getReadable();
-      try {
-        return await readable.getTailIndex();
-      } finally {
-        await readable.cancel().catch(() => {});
-      }
+      const world = await getWorld();
+      const info = await world.streams.getInfo(sessionId, getWorkflowRunStreamId(sessionId));
+      return info.tailIndex;
     },
 
     async resolveContinuation(
