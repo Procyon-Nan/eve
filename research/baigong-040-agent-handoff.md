@@ -6,7 +6,7 @@ last_updated: "2026-10-27"
 
 # baigong-agent 接入 eve 0.40 修复包
 
-本文件供 Agent 侧直接实施，与[eve 修复方案](baigong-040-stream-lifecycle-repair.md)配套。当前是交付要求，修复包尚未生成。Apps 无须修改业务接口。
+本文件供 Agent 侧直接实施，与[eve 修复方案](baigong-040-stream-lifecycle-repair.md)配套。eve 源码修复及本地分项验证已完成，0.40.0-baigong.3 版本提交正在准备，tgz 尚未生成。Agent A01–A04 尚未实施或验收；收到明确版本、提交和包哈希后再接入。Apps 无须修改业务接口。
 
 ## 进度
 

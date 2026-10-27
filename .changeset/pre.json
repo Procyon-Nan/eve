@@ -41,6 +41,12 @@
     "@eve/self-modification": "1.0.0"
   },
   "changesets": [
+    "baigong-acceptance-receipt-wait",
+    "baigong-close-drain-persisted-chunks",
+    "baigong-hook-token-index",
+    "baigong-local-stream-read-cleanup",
+    "baigong-stream-wrapper-cleanup",
+    "baigong-workflow-reader-cancellation",
     "calm-tools-project-output",
     "fresh-development-world",
     "quiet-generated-data",
