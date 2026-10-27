@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 import { loadDeclaration } from "../_shared.mjs";
+import { patchWorldLocalStreamLifecycle } from "./world-local-stream-lifecycle.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -61,5 +62,8 @@ export default {
   compiledPath: "@workflow/world-local",
   chunkGroup: "workflow",
   declaration: await loadDeclaration("workflow-world-local.d.ts"),
-  plugins: [workflowWorldLocalVersionPlugin],
+  plugins: [
+    workflowWorldLocalVersionPlugin,
+    patchWorldLocalStreamLifecycle(workflowWorldLocalVersion),
+  ],
 };
