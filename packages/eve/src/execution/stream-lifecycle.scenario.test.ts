@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
@@ -47,6 +48,7 @@ describe("compiled local stream lifecycle", () => {
         intervals.delete(timer as ReturnType<typeof setInterval>);
         originalClearInterval(timer);
       });
+      const subscriptions = vi.spyOn(EventEmitter.prototype, "on");
       const get = vi.spyOn(world.streams, "get");
       const readdir = vi.spyOn(fs, "readdir");
       try {
@@ -57,11 +59,31 @@ describe("compiled local stream lifecycle", () => {
               : await world.streams.get("wrun_audit", `stream-${index}`, 0);
           const reader = stream.getReader();
           const pending = reader.read();
-          await vi.waitFor(() => expect(intervals.size).toBe(1));
-          await reader.cancel("consumer disconnected");
-          await expect(pending).resolves.toMatchObject({ done: true });
-          reader.releaseLock();
-          await vi.waitFor(() => expect(intervals.size).toBe(0));
+          try {
+            await vi.waitFor(() => {
+              expect(get).toHaveBeenCalledTimes(index + 1);
+              const name = get.mock.calls[index]![1];
+              expect(subscriptions.mock.calls.some(([event]) => event === `close:${name}`)).toBe(
+                true,
+              );
+              expect(intervals.size).toBeGreaterThan(0);
+            });
+            const name = get.mock.calls[index]![1];
+            const registered = subscriptions.mock.calls.findIndex(
+              ([event]) => event === `chunk:${name}`,
+            );
+            const emitter = subscriptions.mock.contexts[registered] as EventEmitter;
+            expect(emitter.listenerCount(`chunk:${name}`)).toBe(1);
+            expect(emitter.listenerCount(`close:${name}`)).toBe(1);
+            await reader.cancel("consumer disconnected");
+            await expect(pending).resolves.toMatchObject({ done: true });
+            await vi.waitFor(() => expect(intervals.size).toBe(0));
+            expect(emitter.listenerCount(`chunk:${name}`)).toBe(0);
+            expect(emitter.listenerCount(`close:${name}`)).toBe(0);
+          } finally {
+            await reader.cancel();
+            reader.releaseLock();
+          }
         }
         const reads = readdir.mock.calls.length;
         await sleep(250);
@@ -238,6 +260,38 @@ describe("compiled local stream lifecycle", () => {
       }
       expect(values).toEqual(["first", "second"]);
     } finally {
+      reader.releaseLock();
+    }
+  });
+
+  it("merges live writes with a paused disk read without duplicates or reordering", async () => {
+    const { world } = await localWorld();
+    await world.streams.write("wrun_audit", "interleaved", "first");
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const original = fs.readFile.bind(fs);
+    let held = false;
+    vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+      if (!held && String(args[0]).endsWith(".bin")) {
+        held = true;
+        entered.resolve();
+        await gate.promise;
+      }
+      return original(...args);
+    });
+    const reader = (await world.streams.get("wrun_audit", "interleaved", 0)).getReader();
+    const first = reader.read();
+    await entered.promise;
+    try {
+      await world.streams.write("wrun_audit", "interleaved", "second");
+      await world.streams.close("wrun_audit", "interleaved");
+      gate.resolve();
+      expect(new TextDecoder().decode((await first).value)).toBe("first");
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("second");
+      await expect(reader.read()).resolves.toMatchObject({ done: true });
+    } finally {
+      gate.resolve();
+      await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
   });

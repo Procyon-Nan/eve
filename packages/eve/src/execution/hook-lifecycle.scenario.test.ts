@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createWorld } from "#compiled/@workflow/world-local/index.js";
 
@@ -89,6 +89,7 @@ function claimPath(dataDir: string, token = "legacy-token") {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const world of worlds.splice(0)) await world.close?.();
   for (const dir of roots.splice(0)) await fs.rm(dir, { recursive: true, force: true });
 });
@@ -223,5 +224,86 @@ describe("compiled legacy hook preparation", () => {
     for (const result of results) {
       expect(JSON.parse(result.stdout)).toEqual({ runId: "wrun_legacy", hookId: "hook_legacy" });
     }
+  });
+  it("holds direct hook creation behind legacy claim preparation", async () => {
+    const dir = await dataDirectory();
+    await legacyHook(dir);
+    await legacyHook(dir, {
+      runId: "wrun_competitor",
+      hookId: "hook_existing",
+      token: "other-token",
+    });
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const original = fs.readFile.bind(fs);
+    let held = false;
+    vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+      if (!held && String(args[0]) === join(dir, "hooks", "hook_legacy.json")) {
+        held = true;
+        entered.resolve();
+        await gate.promise;
+      }
+      return original(...args);
+    });
+    const world = worldFor(dir);
+    const preparing = world.start?.();
+    await entered.promise;
+    const creating = world.events.create("wrun_competitor", {
+      eventType: "hook_created",
+      correlationId: "hook_competitor",
+      eventData: { token: "legacy-token" },
+    });
+    gate.resolve();
+    const [, result] = await Promise.all([preparing, creating]);
+    expect(result.event).toMatchObject({
+      eventType: "hook_conflict",
+      eventData: { conflictingRunId: "wrun_legacy" },
+    });
+    await expect(world.hooks.getByToken("legacy-token")).resolves.toMatchObject({
+      runId: "wrun_legacy",
+      hookId: "hook_legacy",
+    });
+  });
+
+  it("recovers a missing entity and claim from the token event index", async () => {
+    const dir = await dataDirectory();
+    await legacyHook(dir);
+    const world = worldFor(dir);
+    await world.start?.();
+    await world.events.create("wrun_legacy", {
+      eventType: "hook_created",
+      correlationId: "hook_event",
+      eventData: { token: "event-token" },
+    });
+    await fs.unlink(join(dir, "hooks", "hook_event.json"));
+    await fs.unlink(claimPath(dir, "event-token"));
+    await expect(world.hooks.getByToken("event-token")).resolves.toMatchObject({
+      hookId: "hook_event",
+    });
+    await world.events.create("wrun_legacy", {
+      eventType: "hook_disposed",
+      correlationId: "hook_event",
+      eventData: { token: "event-token" },
+    });
+    await expect(world.hooks.getByToken("event-token")).rejects.toMatchObject({
+      name: "HookNotFoundError",
+    });
+    await expect(fs.access(claimPath(dir, "event-token"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not return a cached hook after its run becomes terminal", async () => {
+    const dir = await dataDirectory();
+    await legacyHook(dir);
+    const world = worldFor(dir);
+    await world.start?.();
+    await expect(world.hooks.getByToken("legacy-token")).resolves.toMatchObject({
+      hookId: "hook_legacy",
+    });
+    await world.events.create("wrun_legacy", { eventType: "run_cancelled" });
+    await expect(world.hooks.getByToken("legacy-token")).rejects.toMatchObject({
+      name: "HookNotFoundError",
+    });
   });
 });
