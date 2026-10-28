@@ -14,7 +14,11 @@ last_updated: "2026-10-28"
 - 文件：`eve-0.40.0-baigong.3.tgz`。
 - SHA256：`36ef3fd7fcbde8dcd741c23ba5424170810592d6b8e9d2b23f6637f08503d896`。
 - 配套文件：SHA256SUMS、manifest.json、verify-installed.mjs。
-- 尚未发布到 registry，未核查目标 registry 版本占用；本地 tgz 可供 Agent 接入验收。
+- 已沿用 .2 的 GitHub Release 附件分发方式发布（不是 npm registry 发布）：[https://github.com/Procyon-Nan/eve/releases/tag/eve-v0.40.0-baigong.3](https://github.com/Procyon-Nan/eve/releases/tag/eve-v0.40.0-baigong.3)。
+- 下载地址：[https://github.com/Procyon-Nan/eve/releases/download/eve-v0.40.0-baigong.3/eve-0.40.0-baigong.3.tgz](https://github.com/Procyon-Nan/eve/releases/download/eve-v0.40.0-baigong.3/eve-0.40.0-baigong.3.tgz)。
+- 签名标签 eve-v0.40.0-baigong.3 指向上述源码提交，签名验证通过；Release 不是 draft/prerelease，已设为 latest。
+
+发布后已从 GitHub Release 下载 tgz 到独立文件重新计算 SHA256，与上述值完全一致。远端标签对象为 `b1d41b26351dd995ae038f1d64b43fd5cace4dc0`，解引用提交为 `94d83626bc993e3cbdf63a66dc76b1da4a1d00fb`。
 
 ## 构建来源
 
@@ -44,4 +48,4 @@ node .output/baigong-0.40.0-baigong.3/verify-installed.mjs /tmp/eve-baigong3-ins
 
 ## 交付边界
 
-本记录只覆盖 eve 包级验证。Agent A01/A02、依赖与契约版本升级、Nitro 完整制品、Apps 业务矩阵和 30 分钟观察仍待完成；未执行发布或部署。接入步骤见 [Agent 交付文件](baigong-040-agent-handoff.md)。
+本记录只覆盖 eve 包级验证。Agent A01/A02、依赖与契约版本升级、Nitro 完整制品、Apps 业务矩阵和 30 分钟观察仍待完成；已按用户指示发布 GitHub Release，未执行 Agent/Apps 部署。接入步骤见 [Agent 交付文件](baigong-040-agent-handoff.md)。

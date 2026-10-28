@@ -6,7 +6,7 @@ last_updated: "2026-10-28"
 
 # baigong-agent 接入 eve 0.40 修复包
 
-本文件供 Agent 侧直接实施，与[eve 修复方案](baigong-040-stream-lifecycle-repair.md)配套。eve 源码修复及本地分项验证已完成，0.40.0-baigong.3 已提交为 `94d83626`，tgz 及隔离安装验证已完成。Agent A01–A04 尚未实施或验收；收到明确版本、提交和包哈希后再接入。Apps 无须修改业务接口。
+本文件供 Agent 侧直接实施，与[eve 修复方案](baigong-040-stream-lifecycle-repair.md)配套。eve 源码修复及本地分项验证已完成，0.40.0-baigong.3 已提交为 `94d83626`，tgz 及隔离安装验证已完成，并已沿用 .2 渠道发布 GitHub Release。Agent A01–A04 尚未实施或验收；收到明确版本、提交和包哈希后再接入。Apps 无须修改业务接口。
 
 ## 进度
 
@@ -48,7 +48,13 @@ last_updated: "2026-10-28"
 
 ## A03：更新实际运行代码
 
-2026-10-28 交付：源码提交 `94d83626bc993e3cbdf63a66dc76b1da4a1d00fb`，本地包 `.output/baigong-0.40.0-baigong.3/eve-0.40.0-baigong.3.tgz`（相对 eve 仓库根目录），SHA256 为 `36ef3fd7fcbde8dcd741c23ba5424170810592d6b8e9d2b23f6637f08503d896`。该目录被 Git 忽略，交付时须复制包及 SHA256SUMS/manifest.json；尚未发布到 registry。详见[包级验收记录](baigong-040-package-validation-20261028.md)。
+2026-10-28 交付：源码提交 `94d83626bc993e3cbdf63a66dc76b1da4a1d00fb`，本地包 `.output/baigong-0.40.0-baigong.3/eve-0.40.0-baigong.3.tgz`（相对 eve 仓库根目录），SHA256 为 `36ef3fd7fcbde8dcd741c23ba5424170810592d6b8e9d2b23f6637f08503d896`。该目录被 Git 忽略。已发布 [GitHub Release](https://github.com/Procyon-Nan/eve/releases/tag/eve-v0.40.0-baigong.3)，沿用 .2 的 Release 附件分发方式，不使用 npm registry 发布。Agent 应使用下列固定下载地址更新依赖：
+
+```text
+https://github.com/Procyon-Nan/eve/releases/download/eve-v0.40.0-baigong.3/eve-0.40.0-baigong.3.tgz
+```
+
+SHA256SUMS 随 Release 一并提供。详见[包级验收记录](baigong-040-package-validation-20261028.md)。
 
 交付方提供 eve tgz、版本、SHA256、提交 SHA 和验收记录后再执行：
 
