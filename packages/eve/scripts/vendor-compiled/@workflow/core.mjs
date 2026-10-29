@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 
 import { patchCoreStreamLifecycle } from "./core-stream-lifecycle.mjs";
+import { patchCoreStepContracts } from "./core-step-contracts.mjs";
 
 import {
   buildOpaqueTypesStub,
@@ -169,7 +170,12 @@ export default {
   packageName: "@workflow/core",
   compiledPath: "@workflow/core",
   chunkGroup: "workflow",
-  plugins: [stubCoreWorldFactories(), stubCoreQuickJSEntrypoint(), patchCoreStreamLifecycle()],
+  plugins: [
+    stubCoreWorldFactories(),
+    stubCoreQuickJSEntrypoint(),
+    patchCoreStreamLifecycle(),
+    patchCoreStepContracts(),
+  ],
   entries: [
     {
       outputPath: "index",

@@ -159,12 +159,11 @@ describe("applyWorkflowTransform", () => {
     expect(transformed.code).not.toContain("step//./src/execution/workflow-entry//runWorkflowLoop");
   });
 
-  it("strips the @<version> stamp for stable workflow names but not for steps", async () => {
+  it("keeps unreviewed steps versioned while stable workflow names omit the version", async () => {
     // Stable workflow ids must match across deployments so
     // `start(ref, args, { deploymentId: "latest" })` lands on the
-    // same registry key on a newer deployment. Step ids stay
-    // version-stamped because they are per-deployment internal
-    // identifiers, not cross-deployment routing keys.
+    // same registry key on a newer deployment. Unreviewed steps do not
+    // inherit eve's explicit compatibility contracts by function name.
     const transformed = await transformWorkflowDirectives({
       filename: "src/execution/turn-workflow.ts",
       mode: "workflow",

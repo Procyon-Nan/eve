@@ -1,4 +1,5 @@
 import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
+import { resolveEveStepContract } from "#internal/workflow/step-contracts.js";
 
 import type { WorkflowManifest } from "./workflow-builders.js";
 
@@ -105,12 +106,13 @@ export async function transformWorkflowDirectives(input: {
     return { code: input.source, workflowManifest: {} };
   }
 
-  // Step ids stay version-stamped — they are per-deployment internal
-  // identifiers, not cross-deployment routing keys. Only workflow
-  // functions whose name appears in `stableWorkflowNames` opt out of
-  // the version stamp.
+  // Unreviewed steps retain their package identity; eve's reviewed contracts
+  // survive package releases without rewriting persisted execution history.
   const defaultIdBase = input.moduleSpecifier ?? `./${stripJavaScriptExtension(input.filename)}`;
   const stableIdBase = input.stableModuleSpecifier ?? defaultIdBase;
+  const stepIdFor = (name: string) =>
+    resolveEveStepContract(input.filename, input.stableModuleSpecifier, name) ??
+    createStepId(defaultIdBase, name);
   const manifest: WorkflowManifest = {};
   const replacements: { end: number; start: number; text: string }[] = [];
   const suffixes: string[] = [];
@@ -118,7 +120,7 @@ export async function transformWorkflowDirectives(input: {
 
   for (const fn of functions) {
     if (fn.directive === "use step") {
-      const stepId = createStepId(defaultIdBase, fn.name);
+      const stepId = stepIdFor(fn.name);
       manifest.steps ??= {};
       const stepsForFile = (manifest.steps[input.filename] ??= {});
       stepsForFile[fn.name] = { stepId };
@@ -173,7 +175,7 @@ export async function transformWorkflowDirectives(input: {
 
   if (input.mode === "workflow" && !hasWorkflowDirective) {
     return {
-      code: `${manifestComment}\n${createWorkflowStepProxySource(input.source, ast, functions, defaultIdBase)}`,
+      code: `${manifestComment}\n${createWorkflowStepProxySource(input.source, ast, functions, stepIdFor)}`,
       workflowManifest: manifest,
     };
   }
@@ -202,7 +204,7 @@ function createWorkflowStepProxySource(
   source: string,
   ast: AstProgram,
   functions: readonly DirectiveFunction[],
-  idBase: string,
+  stepIdFor: (name: string) => string,
 ): string {
   const literalExports = findExportedLiteralValueDeclarations(source, ast);
   const proxies = functions
@@ -213,7 +215,7 @@ function createWorkflowStepProxySource(
       // carry the `export ` keyword whenever the function was reachable
       // to importers.
       const exportPrefix = fn.exported ? "export " : "";
-      const stepId = createStepId(idBase, fn.name);
+      const stepId = stepIdFor(fn.name);
       return `${exportPrefix}var ${fn.name} = globalThis[Symbol.for("WORKFLOW_USE_STEP")](${JSON.stringify(stepId)});`;
     });
   const lines = [...literalExports, ...proxies];

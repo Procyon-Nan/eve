@@ -1,0 +1,455 @@
+[
+  {
+    "source": "execution/cancel-descendant-turns-step",
+    "functionName": "cancelDescendantTurnsStep",
+    "id": "step//eve-contract-v1//cancelDescendantTurnsStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//cancelDescendantTurnsStep",
+      "step//eve@0.40.0-baigong.3//cancelDescendantTurnsStep"
+    ]
+  },
+  {
+    "source": "execution/create-session-step",
+    "functionName": "createSessionStep",
+    "id": "step//eve-contract-v1//createSessionStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//createSessionStep",
+      "step//eve@0.40.0-baigong.3//createSessionStep"
+    ]
+  },
+  {
+    "source": "execution/delegated-parent-notification",
+    "functionName": "notifyDelegatedParentStep",
+    "id": "step//eve-contract-v1//notifyDelegatedParentStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//notifyDelegatedParentStep",
+      "step//eve@0.40.0-baigong.3//notifyDelegatedParentStep"
+    ]
+  },
+  {
+    "source": "execution/delegated-parent-notification",
+    "functionName": "notifyTurnCallerStep",
+    "id": "step//eve-contract-v1//notifyTurnCallerStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//notifyTurnCallerStep",
+      "step//eve@0.40.0-baigong.3//notifyTurnCallerStep"
+    ]
+  },
+  {
+    "source": "execution/delegated-parent-notification",
+    "functionName": "notifyCancelledTaskCallerStep",
+    "id": "step//eve-contract-v1//notifyCancelledTaskCallerStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//notifyCancelledTaskCallerStep",
+      "step//eve@0.40.0-baigong.3//notifyCancelledTaskCallerStep"
+    ]
+  },
+  {
+    "source": "execution/delegated-parent-notification",
+    "functionName": "notifyTaskTurnStartedStep",
+    "id": "step//eve-contract-v1//notifyTaskTurnStartedStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//notifyTaskTurnStartedStep",
+      "step//eve@0.40.0-baigong.3//notifyTaskTurnStartedStep"
+    ]
+  },
+  {
+    "source": "execution/delegated-parent-notification",
+    "functionName": "resolveInitialTurnCallerStep",
+    "id": "step//eve-contract-v1//resolveInitialTurnCallerStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//resolveInitialTurnCallerStep",
+      "step//eve@0.40.0-baigong.3//resolveInitialTurnCallerStep"
+    ]
+  },
+  {
+    "source": "execution/delegated-parent-notification",
+    "functionName": "bindTurnCallerContextStep",
+    "id": "step//eve-contract-v1//bindTurnCallerContextStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//bindTurnCallerContextStep",
+      "step//eve@0.40.0-baigong.3//bindTurnCallerContextStep"
+    ]
+  },
+  {
+    "source": "execution/dispatch-runtime-actions-step",
+    "functionName": "dispatchRuntimeActionsStep",
+    "id": "step//eve-contract-v1//dispatchRuntimeActionsStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//dispatchRuntimeActionsStep",
+      "step//eve@0.40.0-baigong.3//dispatchRuntimeActionsStep"
+    ]
+  },
+  {
+    "source": "execution/dispatch-turn-step",
+    "functionName": "dispatchTurnStep",
+    "id": "step//eve-contract-v1//dispatchTurnStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//dispatchTurnStep",
+      "step//eve@0.40.0-baigong.3//dispatchTurnStep"
+    ]
+  },
+  {
+    "source": "execution/dispatch-workflow-runtime-actions-step",
+    "functionName": "dispatchWorkflowRuntimeActionsStep",
+    "id": "step//eve-contract-v1//dispatchWorkflowRuntimeActionsStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//dispatchWorkflowRuntimeActionsStep",
+      "step//eve@0.40.0-baigong.3//dispatchWorkflowRuntimeActionsStep"
+    ]
+  },
+  {
+    "source": "execution/forward-turn-cancellation-step",
+    "functionName": "forwardTurnCancellationStep",
+    "id": "step//eve-contract-v1//forwardTurnCancellationStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//forwardTurnCancellationStep",
+      "step//eve@0.40.0-baigong.3//forwardTurnCancellationStep"
+    ]
+  },
+  {
+    "source": "execution/forward-turn-delivery-step",
+    "functionName": "forwardTurnDeliveryStep",
+    "id": "step//eve-contract-v1//forwardTurnDeliveryStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//forwardTurnDeliveryStep",
+      "step//eve@0.40.0-baigong.3//forwardTurnDeliveryStep"
+    ]
+  },
+  {
+    "source": "execution/host-runtime-context-step",
+    "functionName": "installRootHostRuntimeStep",
+    "id": "step//eve-contract-v1//installRootHostRuntimeStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//installRootHostRuntimeStep",
+      "step//eve@0.40.0-baigong.3//installRootHostRuntimeStep"
+    ]
+  },
+  {
+    "source": "execution/host-runtime-release-step",
+    "functionName": "recordRootHostRuntimeReleaseStep",
+    "id": "step//eve-contract-v1//recordRootHostRuntimeReleaseStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//recordRootHostRuntimeReleaseStep",
+      "step//eve@0.40.0-baigong.3//recordRootHostRuntimeReleaseStep"
+    ]
+  },
+  {
+    "source": "execution/host-runtime-release-step",
+    "functionName": "notifyRootHostRuntimeReleaseStep",
+    "id": "step//eve-contract-v1//notifyRootHostRuntimeReleaseStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//notifyRootHostRuntimeReleaseStep",
+      "step//eve@0.40.0-baigong.3//notifyRootHostRuntimeReleaseStep"
+    ]
+  },
+  {
+    "source": "execution/host-runtime-release-step",
+    "functionName": "settleHostRuntimeReleasesStep",
+    "id": "step//eve-contract-v1//settleHostRuntimeReleasesStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//settleHostRuntimeReleasesStep",
+      "step//eve@0.40.0-baigong.3//settleHostRuntimeReleasesStep"
+    ]
+  },
+  {
+    "source": "execution/host-runtime-release-step",
+    "functionName": "settleTerminatedHostRuntimeHandlesStep",
+    "id": "step//eve-contract-v1//settleTerminatedHostRuntimeHandlesStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//settleTerminatedHostRuntimeHandlesStep",
+      "step//eve@0.40.0-baigong.3//settleTerminatedHostRuntimeHandlesStep"
+    ]
+  },
+  {
+    "source": "execution/proxied-deliver-step",
+    "functionName": "routeProxiedDeliverStep",
+    "id": "step//eve-contract-v1//routeProxiedDeliverStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//routeProxiedDeliverStep",
+      "step//eve@0.40.0-baigong.3//routeProxiedDeliverStep"
+    ]
+  },
+  {
+    "source": "execution/record-host-runtime-acceptance-step",
+    "functionName": "recordHostRuntimeAcceptanceStep",
+    "id": "step//eve-contract-v1//recordHostRuntimeAcceptanceStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//recordHostRuntimeAcceptanceStep",
+      "step//eve@0.40.0-baigong.3//recordHostRuntimeAcceptanceStep"
+    ]
+  },
+  {
+    "source": "execution/report-dropped-wire-payload-step",
+    "functionName": "reportDroppedWirePayloadStep",
+    "id": "step//eve-contract-v1//reportDroppedWirePayloadStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//reportDroppedWirePayloadStep",
+      "step//eve@0.40.0-baigong.3//reportDroppedWirePayloadStep"
+    ]
+  },
+  {
+    "source": "execution/session-callback-step",
+    "functionName": "fireTaskEventCallbackStep",
+    "id": "step//eve-contract-v1//fireTaskEventCallbackStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//fireTaskEventCallbackStep",
+      "step//eve@0.40.0-baigong.3//fireTaskEventCallbackStep"
+    ]
+  },
+  {
+    "source": "execution/session-callback-step",
+    "functionName": "fireTaskUpdateCallbackStep",
+    "id": "step//eve-contract-v1//fireTaskUpdateCallbackStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//fireTaskUpdateCallbackStep",
+      "step//eve@0.40.0-baigong.3//fireTaskUpdateCallbackStep"
+    ]
+  },
+  {
+    "source": "execution/session-callback-step",
+    "functionName": "fireSessionCallbackStep",
+    "id": "step//eve-contract-v1//fireSessionCallbackStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//fireSessionCallbackStep",
+      "step//eve@0.40.0-baigong.3//fireSessionCallbackStep"
+    ]
+  },
+  {
+    "source": "execution/session-timeout-steps",
+    "functionName": "startSessionTimeoutStep",
+    "id": "step//eve-contract-v1//startSessionTimeoutStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//startSessionTimeoutStep",
+      "step//eve@0.40.0-baigong.3//startSessionTimeoutStep"
+    ]
+  },
+  {
+    "source": "execution/session-timeout-steps",
+    "functionName": "signalSessionTimeoutStep",
+    "id": "step//eve-contract-v1//signalSessionTimeoutStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//signalSessionTimeoutStep",
+      "step//eve@0.40.0-baigong.3//signalSessionTimeoutStep"
+    ]
+  },
+  {
+    "source": "execution/session-timeout-steps",
+    "functionName": "cancelSessionTimeoutStep",
+    "id": "step//eve-contract-v1//cancelSessionTimeoutStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//cancelSessionTimeoutStep",
+      "step//eve@0.40.0-baigong.3//cancelSessionTimeoutStep"
+    ]
+  },
+  {
+    "source": "execution/settle-cancelled-turn-step",
+    "functionName": "settleCancelledTurnStep",
+    "id": "step//eve-contract-v1//settleCancelledTurnStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//settleCancelledTurnStep",
+      "step//eve@0.40.0-baigong.3//settleCancelledTurnStep"
+    ]
+  },
+  {
+    "source": "execution/settle-host-runtime-failure-step",
+    "functionName": "settleHostRuntimeFailureStep",
+    "id": "step//eve-contract-v1//settleHostRuntimeFailureStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//settleHostRuntimeFailureStep",
+      "step//eve@0.40.0-baigong.3//settleHostRuntimeFailureStep"
+    ]
+  },
+  {
+    "source": "execution/subagent-adapter",
+    "functionName": "forwardSubagentAuthorizationEventStep",
+    "id": "step//eve-contract-v1//forwardSubagentAuthorizationEventStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//forwardSubagentAuthorizationEventStep",
+      "step//eve@0.40.0-baigong.3//forwardSubagentAuthorizationEventStep"
+    ]
+  },
+  {
+    "source": "execution/subagent-adapter",
+    "functionName": "forwardSubagentInputRequestStep",
+    "id": "step//eve-contract-v1//forwardSubagentInputRequestStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//forwardSubagentInputRequestStep",
+      "step//eve@0.40.0-baigong.3//forwardSubagentInputRequestStep"
+    ]
+  },
+  {
+    "source": "execution/subagent-event-proxy-step",
+    "functionName": "runProxySubagentEventStep",
+    "id": "step//eve-contract-v1//runProxySubagentEventStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//runProxySubagentEventStep",
+      "step//eve@0.40.0-baigong.3//runProxySubagentEventStep"
+    ]
+  },
+  {
+    "source": "execution/subagent-event-proxy-step",
+    "functionName": "emitRecordedTaskInputRequestStep",
+    "id": "step//eve-contract-v1//emitRecordedTaskInputRequestStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//emitRecordedTaskInputRequestStep",
+      "step//eve@0.40.0-baigong.3//emitRecordedTaskInputRequestStep"
+    ]
+  },
+  {
+    "source": "execution/subagent-event-proxy-step",
+    "functionName": "emitRecordedTaskAuthorizationEventStep",
+    "id": "step//eve-contract-v1//emitRecordedTaskAuthorizationEventStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//emitRecordedTaskAuthorizationEventStep",
+      "step//eve@0.40.0-baigong.3//emitRecordedTaskAuthorizationEventStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/child/steps",
+    "functionName": "appendTaskViewStep",
+    "id": "step//eve-contract-v1//appendTaskViewStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//appendTaskViewStep",
+      "step//eve@0.40.0-baigong.3//appendTaskViewStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/child/steps",
+    "functionName": "wakeTaskAuthorizationParentStep",
+    "id": "step//eve-contract-v1//wakeTaskAuthorizationParentStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//wakeTaskAuthorizationParentStep",
+      "step//eve@0.40.0-baigong.3//wakeTaskAuthorizationParentStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/child/steps",
+    "functionName": "wakeTaskParentStep",
+    "id": "step//eve-contract-v1//wakeTaskParentStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//wakeTaskParentStep",
+      "step//eve@0.40.0-baigong.3//wakeTaskParentStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/child/steps",
+    "functionName": "wakeTaskUpdateParentStep",
+    "id": "step//eve-contract-v1//wakeTaskUpdateParentStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//wakeTaskUpdateParentStep",
+      "step//eve@0.40.0-baigong.3//wakeTaskUpdateParentStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/child/steps",
+    "functionName": "wakeTaskInputRequestParentStep",
+    "id": "step//eve-contract-v1//wakeTaskInputRequestParentStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//wakeTaskInputRequestParentStep",
+      "step//eve@0.40.0-baigong.3//wakeTaskInputRequestParentStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/child/steps",
+    "functionName": "deliverTaskInputResponsesStep",
+    "id": "step//eve-contract-v1//deliverTaskInputResponsesStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//deliverTaskInputResponsesStep",
+      "step//eve@0.40.0-baigong.3//deliverTaskInputResponsesStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/parent/delegate",
+    "functionName": "acknowledgeDelegatedTasksStep",
+    "id": "step//eve-contract-v1//acknowledgeDelegatedTasksStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//acknowledgeDelegatedTasksStep",
+      "step//eve@0.40.0-baigong.3//acknowledgeDelegatedTasksStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/parent/dispatch-task-step",
+    "functionName": "dispatchTaskStep",
+    "id": "step//eve-contract-v1//dispatchTaskStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//dispatchTaskStep",
+      "step//eve@0.40.0-baigong.3//dispatchTaskStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/parent/hitl-proxy-steps",
+    "functionName": "recordTaskInputRequestStep",
+    "id": "step//eve-contract-v1//recordTaskInputRequestStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//recordTaskInputRequestStep",
+      "step//eve@0.40.0-baigong.3//recordTaskInputRequestStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/parent/hitl-proxy-steps",
+    "functionName": "acceptTaskAuthorizationEventStep",
+    "id": "step//eve-contract-v1//acceptTaskAuthorizationEventStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//acceptTaskAuthorizationEventStep",
+      "step//eve@0.40.0-baigong.3//acceptTaskAuthorizationEventStep"
+    ]
+  },
+  {
+    "source": "execution/tasks/parent/hitl-proxy-steps",
+    "functionName": "recordTerminalTaskViewsStep",
+    "id": "step//eve-contract-v1//recordTerminalTaskViewsStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//recordTerminalTaskViewsStep",
+      "step//eve@0.40.0-baigong.3//recordTerminalTaskViewsStep"
+    ]
+  },
+  {
+    "source": "execution/terminal-session-completion-step",
+    "functionName": "emitTerminalSessionCompletionStep",
+    "id": "step//eve-contract-v1//emitTerminalSessionCompletionStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//emitTerminalSessionCompletionStep",
+      "step//eve@0.40.0-baigong.3//emitTerminalSessionCompletionStep"
+    ]
+  },
+  {
+    "source": "execution/terminal-session-failure-step",
+    "functionName": "emitTerminalSessionFailureStep",
+    "id": "step//eve-contract-v1//emitTerminalSessionFailureStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//emitTerminalSessionFailureStep",
+      "step//eve@0.40.0-baigong.3//emitTerminalSessionFailureStep"
+    ]
+  },
+  {
+    "source": "execution/terminate-child-sessions-step",
+    "functionName": "terminateChildSessionsStep",
+    "id": "step//eve-contract-v1//terminateChildSessionsStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//terminateChildSessionsStep",
+      "step//eve@0.40.0-baigong.3//terminateChildSessionsStep"
+    ]
+  },
+  {
+    "source": "execution/turn-control-protocol",
+    "functionName": "sendTurnControlStep",
+    "id": "step//eve-contract-v1//sendTurnControlStep",
+    "legacyIds": [
+      "step//eve@0.40.0-baigong.2//sendTurnControlStep",
+      "step//eve@0.40.0-baigong.3//sendTurnControlStep"
+    ]
+  },
+  {
+    "source": "execution/workflow-steps",
+    "functionName": "turnStep",
+    "id": "step//eve-contract-v1//turnStep",
+    "legacyIds": ["step//eve@0.40.0-baigong.2//turnStep", "step//eve@0.40.0-baigong.3//turnStep"]
+  },
+  {
+    "source": "internal/workflow/index",
+    "functionName": "fetch",
+    "id": "step//eve-contract-v1//fetch",
+    "legacyIds": ["step//eve@0.40.0-baigong.2//fetch", "step//eve@0.40.0-baigong.3//fetch"]
+  }
+]
