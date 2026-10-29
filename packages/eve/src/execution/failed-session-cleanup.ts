@@ -145,6 +145,25 @@ async function readRecordedChildren(
   return hasUnfinishedSteps;
 }
 
+/** Read-only relationship inspection shared by inspect and cleanup. */
+export async function inspectFailedSessionRelations(
+  world: World,
+  sessionId: string,
+  relations: FailedSessionRelations,
+) {
+  const unfinished = await readRecordedChildren(world, sessionId, relations);
+  const descendants = new Set<string>();
+  function visit(parent: string) {
+    for (const id of relations.children.get(parent) ?? []) {
+      if (id === sessionId || descendants.has(id)) continue;
+      descendants.add(id);
+      visit(id);
+    }
+  }
+  visit(sessionId);
+  return { unfinished, descendants };
+}
+
 /** Offline mode requires all application writers to have been stopped by the operator. */
 export async function cleanupFailedSession(input: {
   world: World;
@@ -157,7 +176,11 @@ export async function cleanupFailedSession(input: {
   if (root.status !== "failed" || root.workflowName !== workflowEntryReference.workflowId) {
     throw new Error("Cleanup requires a failed eve session workflow.");
   }
-  const unfinished = await readRecordedChildren(world, sessionId, relations);
+  const { unfinished, descendants } = await inspectFailedSessionRelations(
+    world,
+    sessionId,
+    relations,
+  );
   const result: FailedSessionCleanupResult = {
     sessionId,
     scope: "local-workflow",
@@ -168,15 +191,6 @@ export async function cleanupFailedSession(input: {
     errors: [],
     complete: false,
   };
-  const descendants = new Set<string>();
-  function visit(parent: string) {
-    for (const id of relations.children.get(parent) ?? []) {
-      if (id === sessionId || descendants.has(id)) continue;
-      descendants.add(id);
-      visit(id);
-    }
-  }
-  visit(sessionId);
   if (input.mode === "online" && unfinished) result.deferredRunIds.push(sessionId);
   const streamsToClose = new Set([sessionId]);
   for (const id of descendants) {

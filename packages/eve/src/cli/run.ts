@@ -1,3 +1,4 @@
+import { registerRepairReplayCommand } from "#cli/commands/register-repair-replay-command.js";
 import { Command, CommanderError, InvalidArgumentError } from "#compiled/commander/index.js";
 import { registerBuildCommand, type BuildHost } from "#cli/commands/build.js";
 import { devBootPhase, type DevBootProgressReporter } from "#internal/dev-boot-progress.js";
@@ -278,6 +279,7 @@ function createCliProgram(
     });
 
   registerProjectCommands({ program, logger, applicationContext });
+  registerRepairReplayCommand(program);
 
   registerBuildCommand({
     applicationContext,

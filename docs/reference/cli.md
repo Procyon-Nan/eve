@@ -205,6 +205,34 @@ For the local Workflow World, eve initializes storage before accepting requests 
 
 Recovery uses at most half the delivery slots (rounded down, with a minimum of one). Normal messages and recovery messages alternate when both can run. A delayed redelivery releases its slot until it is due. The recovery buffer bounds ready recovery messages; it does not bound normal message backlog or delayed messages. Closing the World stops the recovery scan, cancels queued waits and transport requests, and waits for active delivery attempts to finish.
 
+## `eve repair-replay`
+
+Offline maintenance for session Workflows that failed because a reviewed eve step changed identity from `0.40.0-baigong.2` to `0.40.0-baigong.3`. Other failures are excluded.
+
+From the application root, inspect a local data directory:
+
+```bash
+pnpm exec eve repair-replay inspect \
+  --data-dir .eve/.workflow-data \
+  --output /tmp/eve-replay-inspect.json
+```
+
+`inspect` reads persisted records without starting the World, loading the application bootstrap, running recovery, or modifying Workflow data. The report contains the eligible session IDs, failure timestamps and codes, associated local Run IDs, stream counts, and unresolved items. It contains no message text, raw exceptions, or routing tokens.
+
+Before `apply`, stop all writers and back up the current application database and Workflow directory. Keep them stopped until maintenance finishes. `--writers-stopped` records the operator's confirmation; it does not detect other processes.
+
+```bash
+pnpm exec eve repair-replay apply \
+  --data-dir .eve/.workflow-data \
+  --manifest /tmp/eve-replay-inspect.json \
+  --writers-stopped \
+  --output /tmp/eve-replay-apply.json
+```
+
+`apply` rechecks each listed failure and timestamp. It preserves the failed session, messages, step results, and completed child Workflows. It cancels precisely associated active local Runs and closes registered streams with the existing EOF format. Running it again does not repeat cancellation of terminal Runs or append another EOF to a closed stream.
+
+Both commands return a nonzero exit status for incomplete inspection or cleanup. Check the report's `errors` and `unresolvedRunIds`; a `scope` of `local-workflow` does not confirm remote executors have stopped. Reports must be written outside the Workflow data directory. Do not restore a pre-upgrade backup over current business data to perform this repair.
+
 ## `eve dev`
 
 ```bash
