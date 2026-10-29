@@ -422,7 +422,7 @@ describe("Nitro route configuration", () => {
     expect(readWriteFileSourceMatching("/workflow/steps-handler.mjs")).toBeUndefined();
   });
 
-  it("does not register direct workflow queue handlers for self-hosted production builds without a configured world", async () => {
+  it("registers direct workflow queue handlers and starts recovery for the default local production world", async () => {
     const root = "/tmp/eve-nitro-direct-handlers-self-hosted-no-world";
     const buildDir = `${root}/nitro`;
     const workflowBuildDir = `${root}/workflow-cache`;
@@ -435,8 +435,9 @@ describe("Nitro route configuration", () => {
 
     const workflowHandlerSource = readWriteFileSourceMatching("/workflow/workflows-handler.mjs");
 
-    expect(workflowHandlerSource).not.toContain("registerHandler");
-    expect(workflowHandlerSource).not.toContain("__eveGetWorkflowWorld");
+    expect(workflowHandlerSource).toContain("registerHandler");
+    expect(workflowHandlerSource).toContain("__eveWorkflowWorld.startRecovery?.();");
+    expect(workflowHandlerSource).toContain("__eveGetWorkflowWorld");
   });
 });
 

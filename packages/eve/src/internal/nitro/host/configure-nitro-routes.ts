@@ -138,6 +138,7 @@ async function addWorkflowFileHandler(
 
   nitro.options.handlers.push({
     handler: handlerPath,
+    lazy: false,
     route: input.route,
   });
 }
@@ -208,6 +209,7 @@ function buildWorkflowFileHandlerSource(input: {
     }
 
     lines.push(
+      "    __eveWorkflowWorld.startRecovery?.();",
       "  }",
       "} catch (err) {",
       '  console.warn("[eve] Failed to register direct workflow queue handlers:", err);',
@@ -464,12 +466,9 @@ export async function configureProductionNitroRoutes(
   );
 
   const workflowBundlePath = join(preparedHost.workflowBuildDir, "workflows.mjs");
-  const hasConfiguredWorkflowWorld =
-    preparedHost.compileResult.manifest.config.experimental?.workflow?.world !== undefined;
-  const directHandlers =
-    !isVercelBuildEnvironment() && hasConfiguredWorkflowWorld
-      ? [createWorkflowDirectHandlerEntry(preparedHost, workflowBundlePath)]
-      : [];
+  const directHandlers = !isVercelBuildEnvironment()
+    ? [createWorkflowDirectHandlerEntry(preparedHost, workflowBundlePath)]
+    : [];
   const workflowRoute = findWorkflowRoute(routeRegistry);
   if (workflowRoute !== undefined) {
     await registerWorkflowRoute(

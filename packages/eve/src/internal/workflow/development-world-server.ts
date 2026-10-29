@@ -1,8 +1,13 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 
-import type { ValidQueueName, World } from "#compiled/@workflow/world/index.js";
-import { createWorld } from "#compiled/@workflow/world-local/index.js";
+import type { World } from "#compiled/@workflow/world/index.js";
+import {
+  createWorld,
+  resolveRecoverActiveRuns,
+  type LocalWorld,
+} from "#compiled/@workflow/world-local/index.js";
+import { recoverLocalRuns } from "#internal/workflow/recover-local-runs.js";
 import { turnWorkflowReference } from "#execution/workflow-runtime.js";
 import { deriveEveWorkflowQueuePrefix } from "#internal/workflow/queue-namespace.js";
 import {
@@ -60,7 +65,9 @@ class LocalParentDevelopmentWorkflowWorld implements ParentDevelopmentWorkflowWo
   readonly #appRoot: string;
   readonly #resolveActiveGenerationId: () => string;
   readonly #transportSecret: string;
-  readonly #world: World;
+  readonly #world: LocalWorld;
+  readonly #recoveryController = new AbortController();
+  #recoveryTask: Promise<void> | undefined;
   #closed = false;
   #started = false;
 
@@ -87,6 +94,11 @@ class LocalParentDevelopmentWorkflowWorld implements ParentDevelopmentWorkflowWo
     if (this.#started) {
       return;
     }
+    await this.#world.start?.();
+    if (!resolveRecoverActiveRuns({})) {
+      this.#started = true;
+      return;
+    }
     const referencedGenerationIds = await this.#collectActiveTurnGenerationIds();
     const missingGenerationIds = new Set<string>();
     for (const generationId of referencedGenerationIds) {
@@ -103,14 +115,28 @@ class LocalParentDevelopmentWorkflowWorld implements ParentDevelopmentWorkflowWo
           `remove "${LOCAL_WORKFLOW_WORLD_DATA_DIRECTORY_RELATIVE_PATH}" to discard the app's active local Workflow runs.`,
       );
     }
-    await this.#world.start?.();
     this.#started = true;
-    await reenqueueActiveDevelopmentRuns({
-      enqueue: this.#queue.bind(this),
+    this.#recoveryTask = recoverLocalRuns({
+      enqueue: (name, message, options) =>
+        this.#world.queueRecovery(name, message, {
+          ...options,
+          headers: {
+            ...options?.headers,
+            [DEVELOPMENT_WORKFLOW_DELIVERY_HEADER]: this.#transportSecret,
+          },
+        }),
       prefix: deriveEveWorkflowQueuePrefix(this.#agentName),
-      quarantinedGenerationIds: missingGenerationIds,
-      world: this.#world,
-    });
+      include: (run) => !missingGenerationIds.has(run.deploymentId),
+      runs: this.#world.runs,
+      signal: this.#recoveryController.signal,
+    })
+      .then((count) => {
+        if (count > 0) console.log(`[eve:dev] Re-enqueued ${count} active run(s) on startup`);
+      })
+      .catch((error: unknown) => {
+        if (!this.#recoveryController.signal.aborted)
+          console.error("[eve:dev] Startup recovery failed:", error);
+      });
   }
 
   async close(): Promise<void> {
@@ -119,7 +145,9 @@ class LocalParentDevelopmentWorkflowWorld implements ParentDevelopmentWorkflowWo
     }
     this.#closed = true;
     this.#started = false;
+    this.#recoveryController.abort();
     await this.#world.close?.();
+    await this.#recoveryTask;
   }
 
   async handleRequest(request: Request): Promise<Response | undefined> {
@@ -284,40 +312,4 @@ function isDevelopmentWorldCall(value: unknown): value is DevelopmentWorldCall {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function reenqueueActiveDevelopmentRuns(input: {
-  readonly enqueue: World["queue"];
-  readonly prefix: string;
-  readonly quarantinedGenerationIds: ReadonlySet<string>;
-  readonly world: World;
-}): Promise<void> {
-  for (const status of ["pending", "running"] as const) {
-    let cursor: string | undefined;
-    do {
-      let page: Awaited<ReturnType<World["runs"]["list"]>>;
-      try {
-        page = await input.world.runs.list({
-          pagination: { cursor },
-          resolveData: "none",
-          status,
-        });
-      } catch (error) {
-        throw new Error(
-          `Failed to read the app's active local Workflow runs. ` +
-            `Remove "${LOCAL_WORKFLOW_WORLD_DATA_DIRECTORY_RELATIVE_PATH}" to discard them.`,
-          { cause: error },
-        );
-      }
-      for (const run of page.data) {
-        if (input.quarantinedGenerationIds.has(run.deploymentId)) {
-          continue;
-        }
-        await input.enqueue(`${input.prefix}${run.workflowName}` as ValidQueueName, {
-          runId: run.runId,
-        });
-      }
-      cursor = page.hasMore ? (page.cursor ?? undefined) : undefined;
-    } while (cursor !== undefined);
-  }
 }

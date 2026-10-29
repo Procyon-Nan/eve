@@ -312,6 +312,7 @@ import { resolveLocalWorkflowWorldDataDirectory } from ${dataDirectoryImportSpec
     const createWorldSource = `
 const workflowWorld = await workflowWorldModule.createWorld({
   dataDir: resolveLocalWorkflowWorldDataDirectory(process.cwd()),
+  deferRecovery: true,
 });`.trimStart();
     return {
       moduleImportSpecifier,

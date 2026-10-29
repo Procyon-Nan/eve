@@ -7,6 +7,8 @@ import { patchWorldLocalHookIndex } from "./world-local-hook-index.mjs";
 import { patchWorldLocalStreamLifecycle } from "./world-local-stream-lifecycle.mjs";
 import { patchWorldLocalQueue } from "./world-local-queue.mjs";
 
+import { patchWorldLocalRecovery } from "./world-local-recovery.mjs";
+
 const require = createRequire(import.meta.url);
 
 function resolveWorkflowWorldLocalVersion() {
@@ -69,5 +71,6 @@ export default {
     patchWorldLocalStreamLifecycle(workflowWorldLocalVersion),
     patchWorldLocalHookIndex(workflowWorldLocalVersion),
     patchWorldLocalQueue(),
+    patchWorldLocalRecovery(),
   ],
 };
