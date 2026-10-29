@@ -308,12 +308,14 @@ function resolveWorkflowWorldWiring(packageName: string): WorkflowWorldWiring {
       `src/compiled/${packageName}/index.js`,
     );
     const importLines = `
-import { resolveLocalWorkflowWorldDataDirectory } from ${dataDirectoryImportSpecifier};`.trimStart();
+import { resolveLocalWorkflowWorldDataDirectory } from ${dataDirectoryImportSpecifier};
+import { installFailedSessionCleanup } from ${stringifyEsmImportSpecifier(resolvePackageSourceFilePath("src/execution/install-failed-session-cleanup.ts"))};`.trimStart();
     const createWorldSource = `
 const workflowWorld = await workflowWorldModule.createWorld({
   dataDir: resolveLocalWorkflowWorldDataDirectory(process.cwd()),
   deferRecovery: true,
-});`.trimStart();
+});
+installFailedSessionCleanup(workflowWorld);`.trimStart();
     return {
       moduleImportSpecifier,
       extraImportLines: importLines.split("\n"),
@@ -375,7 +377,9 @@ export function createWorkflowWorldPluginSource(input: {
     "await getWorld();",
     "await workflowWorld.start?.();",
     "",
-    "export default function installWorkflowWorldPlugin() {}",
+    "export default function installWorkflowWorldPlugin(nitroApp) {",
+    '  nitroApp.hooks.hook("close", () => workflowWorld.close?.());',
+    "}",
     "",
   ].join("\n");
 }

@@ -93,3 +93,5 @@ Agent 已有 eve-stream token 增加同 session 的 STATUS 只读权限；run/co
 回执须填写实际 SHA、命令、制品、时间和输出位置；不得仅填“已检查”。正式交付时补充版本、下载 URL、SHA256、最终配置参数和真实维护命令。
 
 E04a 接口已实现：`GET /eve/v1/session/:sessionId/status`；客户端为 `client.sessions.attach(sessionId).getExecutionStatus({ signal })`。返回四个字段：sessionId、executionStatus、finishedAt、errorCode。接口不读取或修改消息流，404 仅表示 Run 不存在，存储读取错误返回 500。尚未完成统一构建与运行验收；Agent 的该路由授权仍需按本文接入。
+
+E04b 补充决策 A：在线失败状态立即可读，但取消 Run 不是写入者退出确认。存在未完成步骤/turn/子会话时，eve 报告清理未完成，不强制关闭主流；Agent 必须按持久 status 结束客户端等待，不能只等待 EOF。停写后使用 E05 完成对应本地执行的取消及 EOF。清理报告 `scope=local-workflow`，不得据此释放远程执行器的运行引用；远程引用必须使用其自身终态合同。

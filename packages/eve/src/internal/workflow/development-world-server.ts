@@ -1,3 +1,4 @@
+import { installFailedSessionCleanup } from "#execution/install-failed-session-cleanup.js";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -88,6 +89,7 @@ class LocalParentDevelopmentWorkflowWorld implements ParentDevelopmentWorkflowWo
       dataDir: resolveLocalWorkflowWorldDataDirectory(input.appRoot),
       recoverActiveRuns: false,
     });
+    installFailedSessionCleanup(this.#world);
   }
 
   async start(): Promise<void> {

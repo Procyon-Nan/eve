@@ -177,6 +177,8 @@ export default {
     patchCoreStepContracts(),
   ],
   entries: [
+    { entry: "dist/serialization.js", outputPath: "serialization" },
+    { entry: "dist/serialization/encryption.js", outputPath: "serialization/encryption" },
     {
       outputPath: "index",
     },
