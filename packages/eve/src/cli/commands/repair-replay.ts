@@ -12,7 +12,7 @@ import {
   inspectFailedSessionRelations,
   readFailedSessionRelations,
 } from "#execution/failed-session-cleanup.js";
-import contracts from "#internal/workflow/step-contracts.json" with { type: "json" };
+import { eveStepContracts as contracts } from "#internal/workflow/step-contracts.js";
 
 const FORMAT = "eve-failed-session-repair-v1";
 interface Candidate {

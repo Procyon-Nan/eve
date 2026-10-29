@@ -31,6 +31,9 @@ function makeSession(): Session {
     async getEventStream() {
       return new ReadableStream();
     },
+    async getExecutionStatus() {
+      throw new Error("Execution status is not used by this fixture");
+    },
     async getStreamTailIndex() {
       return -1;
     },

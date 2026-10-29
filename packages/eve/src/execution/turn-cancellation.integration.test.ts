@@ -3,6 +3,8 @@ import { getWorld, resumeHook, start } from "#internal/workflow/runtime.js";
 
 import { createTestRuntime, type TestRuntime } from "#internal/testing/app-harness.js";
 import { mockChannelContext } from "#internal/testing/mocks/mock-channel-operations.js";
+import { mockSandbox } from "#internal/testing/mocks/mock-sandbox.js";
+import { defineSandbox } from "#public/definitions/sandbox.js";
 import {
   captureTurnEvents,
   containsEventSequence,
@@ -195,6 +197,37 @@ async function expectNoStepRetries(runId: string): Promise<void> {
 
   expect(failureEvents).toEqual([]);
   expect([...completions.entries()].filter(([, count]) => count > 1)).toEqual([]);
+}
+
+function installSharedTestSandbox(runtime: TestRuntime): void {
+  const sandbox = mockSandbox({ id: "turn-cancellation-sandbox" });
+  const sourceId = "test:turn-cancellation-sandbox";
+  runtime.manifest.sandbox = {
+    sourceId,
+    sourceKind: "module",
+    sourceHash: "turn-cancellation-test",
+    logicalPath: "sandbox.ts",
+    backendName: "test",
+  };
+  runtime.moduleMap.nodes[ROOT_COMPILED_AGENT_NODE_ID]!.modules[sourceId] = {
+    default: defineSandbox({
+      backend: {
+        name: "test",
+        prewarm: async () => ({ reused: false }),
+        create: async (input) => ({
+          captureState: async () => ({
+            backendName: "test",
+            metadata: {},
+            sessionKey: input.sessionKey,
+          }),
+          session: sandbox.session,
+          shutdown: async () => {},
+          stop: async () => {},
+          useSessionFn: async () => sandbox.session,
+        }),
+      },
+    }),
+  };
 }
 
 function expectNoFailureEvents(events: readonly UnstampedMessageStreamEvent[]): void {
@@ -574,6 +607,7 @@ describe("turn cancellation integration", () => {
 
   it("cascades cancellation to an in-flight subagent and does not re-dispatch it", async () => {
     const fixture = createWaitToolRuntime("turn-cancel-subagent");
+    installSharedTestSandbox(fixture.runtime);
     const continuationToken = "http:turn-cancel-subagent";
 
     await fixture.runtime.run(async () => {
@@ -640,6 +674,7 @@ describe("turn cancellation integration", () => {
 
   it("cancels a turn parked on a child HITL request without corrupting the stream", async () => {
     const runtime = createTestRuntime({ agent: { name: "turn-cancel-hitl" } });
+    installSharedTestSandbox(runtime);
     const continuationToken = "http:turn-cancel-hitl";
 
     await runtime.run(async () => {

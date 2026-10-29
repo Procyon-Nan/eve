@@ -185,6 +185,10 @@ export function patchWorldLocalQueue() {
         `import { createLocalQueueScheduler, readLocalQueueLimit } from ${JSON.stringify(schedulerPath)};\n` +
         source;
       source = source.replace(
+        "const DEFAULT_CONCURRENCY_LIMIT = 1000;",
+        "const DEFAULT_CONCURRENCY_LIMIT = 16;",
+      );
+      source = source.replace(
         "const WORKFLOW_LOCAL_QUEUE_CONCURRENCY = parseInt(process.env.WORKFLOW_LOCAL_QUEUE_CONCURRENCY ?? '0', 10) ||\n    DEFAULT_CONCURRENCY_LIMIT;",
         "const WORKFLOW_LOCAL_QUEUE_CONCURRENCY = readLocalQueueLimit('WORKFLOW_LOCAL_QUEUE_CONCURRENCY', DEFAULT_CONCURRENCY_LIMIT);",
       );

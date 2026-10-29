@@ -200,7 +200,7 @@ For the local Workflow World, eve initializes storage before accepting requests 
 | Environment variable                 | Meaning                                                                                                                   |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `WORKFLOW_LOCAL_RECOVER_ACTIVE_RUNS` | Set to `false` to disable automatic recovery.                                                                             |
-| `WORKFLOW_LOCAL_QUEUE_CONCURRENCY`   | Maximum simultaneous delivery attempts. Must be a positive safe integer.                                                  |
+| `WORKFLOW_LOCAL_QUEUE_CONCURRENCY`   | Maximum simultaneous delivery attempts; defaults to 16. Must be a positive safe integer.                                  |
 | `WORKFLOW_LOCAL_RECOVERY_BUFFER`     | Maximum ready recovery deliveries waiting for a slot; defaults to the concurrency limit. Must be a positive safe integer. |
 
 Recovery uses at most half the delivery slots (rounded down, with a minimum of one). Normal messages and recovery messages alternate when both can run. A delayed redelivery releases its slot until it is due. The recovery buffer bounds ready recovery messages; it does not bound normal message backlog or delayed messages. Closing the World stops the recovery scan, cancels queued waits and transport requests, and waits for active delivery attempts to finish.

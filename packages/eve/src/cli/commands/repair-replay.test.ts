@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBaigongStepIdentityFailure } from "./repair-replay";
+import { isBaigongStepIdentityFailure } from "./repair-replay.js";
 
 function divergence(from: string, to: string) {
   return Object.assign(

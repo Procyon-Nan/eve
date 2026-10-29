@@ -5,7 +5,7 @@ import {
 } from "#compiled/@workflow/core/serialization.js";
 import { cancelRun } from "#internal/workflow/runtime.js";
 import { readRunPayloadKey } from "#internal/workflow/run-payload.js";
-import contracts from "#internal/workflow/step-contracts.json" with { type: "json" };
+import { eveStepContracts as contracts } from "#internal/workflow/step-contracts.js";
 import {
   sessionTimeoutWorkflowReference,
   taskRunWorkflowReference,

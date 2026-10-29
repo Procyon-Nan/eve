@@ -192,6 +192,9 @@ function createMockAttachSession(events: ReadableStream<MessageStreamEvent>) {
     async getEventStream() {
       return events;
     },
+    async getExecutionStatus() {
+      throw new Error("Execution status is not used by this fixture");
+    },
     async getStreamTailIndex() {
       return -1;
     },

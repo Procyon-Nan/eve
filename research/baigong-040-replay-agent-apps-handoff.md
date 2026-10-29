@@ -1,7 +1,7 @@
 ---
 issue: local/2026-10-28-eve-replay-startup-handoff
 status: proposed
-last_updated: 2026-10-29
+last_updated: !!str 2026-10-29
 ---
 
 # 跨版本修复：Agent 与 Apps 接入交付方案
@@ -13,6 +13,8 @@ last_updated: 2026-10-29
 兼容的活动 `.2/.3` 会话升级后继续；此次已经 failed 的会话只保留历史、不续聊、不自动新建替代会话。Agent 与 Apps 必须展示一致终态，不再等待已失败的执行。
 
 eve 将交付新不可变 tgz、版本与源码 SHA、SHA256、兼容清单、存量 B 检查/收敛工具。Agent 固定该包并完整重建；当前 `.3` 不具备下述新接口。
+
+本地队列默认同时派发 16 项，恢复最多使用 8 个执行槽；恢复就绪等待容量默认 16。`WORKFLOW_LOCAL_QUEUE_CONCURRENCY` 可配置总并发，`WORKFLOW_LOCAL_RECOVERY_BUFFER` 可独立配置恢复等待容量；均须为正安全整数。修改环境变量后重启进程生效。既有 `WORKFLOW_LOCAL_RECOVER_ACTIVE_RUNS=false` 仍关闭启动恢复。该默认值依据独立调度探针选定，生产模型及工具资源需按业务负载验收。
 
 ## 2. 拟新增 eve 接口
 

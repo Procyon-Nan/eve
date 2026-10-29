@@ -52,7 +52,7 @@ export function installFailedSessionCleanup(world: World): void {
       });
   }
 
-  world.events.create = async (...args) => {
+  world.events.create = (async (...args: Parameters<World["events"]["create"]>) => {
     const result = await createEvent(...args);
     if (
       args[1].eventType === "run_failed" &&
@@ -62,7 +62,7 @@ export function installFailedSessionCleanup(world: World): void {
       schedule();
     }
     return result;
-  };
+  }) as World["events"]["create"];
   world.close = async () => {
     await close?.();
     while (cleanup) await cleanup;

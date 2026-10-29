@@ -1,0 +1,17 @@
+{
+  "kind": "eve-extension-capability-contract",
+  "capability": "channel",
+  "epoch": 6,
+  "sha256": "1e947332d8636ccec3455bd8a65cf83d293ff99607d4213178ceeef0fd119bd3",
+  "exports": [
+    "DELETE",
+    "GET",
+    "PATCH",
+    "POST",
+    "PUT",
+    "WS",
+    "createWebSocketUpgradeServer",
+    "defineChannel",
+    "isChannel"
+  ]
+}

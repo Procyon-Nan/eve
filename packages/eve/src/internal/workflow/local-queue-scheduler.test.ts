@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLocalQueueScheduler } from "./local-queue-scheduler";
+import { createLocalQueueScheduler } from "./local-queue-scheduler.js";
 
 afterEach(() => vi.useRealTimers());
 
