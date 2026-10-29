@@ -6,17 +6,23 @@ last_updated: !!str 2026-10-29
 
 # 跨版本修复：Agent 与 Apps 接入交付方案
 
-本文件是待实施合同，尚无新的可安装修复包。总方案及进度入口：[跨版本重放、启动恢复与失败收敛](baigong-040-replay-startup-repair.md)。不得把本文用于直接操作生产数据。
+本文件是 Agent/Apps 接入合同。eve 修复版本为 `0.40.0-baigong.4`，包已完成隔离验收；发布状态以 [GitHub Release](https://github.com/Procyon-Nan/eve/releases/tag/eve-v0.40.0-baigong.4) 为准。总方案及进度入口：[跨版本重放、启动恢复与失败收敛](baigong-040-replay-startup-repair.md)。不得把本文用于直接操作生产数据。
 
 ## 1. 接入结果
 
 兼容的活动 `.2/.3` 会话升级后继续；此次已经 failed 的会话只保留历史、不续聊、不自动新建替代会话。Agent 与 Apps 必须展示一致终态，不再等待已失败的执行。
 
-eve 将交付新不可变 tgz、版本与源码 SHA、SHA256、兼容清单、存量 B 检查/收敛工具。Agent 固定该包并完整重建；当前 `.3` 不具备下述新接口。
+Agent 固定 `.4` tgz 并完整重建；旧 `.3` 不具备下述新接口。
+
+- 下载：[eve-0.40.0-baigong.4.tgz](https://github.com/Procyon-Nan/eve/releases/download/eve-v0.40.0-baigong.4/eve-0.40.0-baigong.4.tgz)。
+- SHA256：`ef731869aaa370b326f1dd29039ba92b3726383249150f18f54f6edf4a63ba84`。
+- 源码提交：以该 Release 的签名标签及 `manifest.json` 为准。
+- 本地制品：`.output/baigong-0.40.0-baigong.4/`。
+- 验收范围：[统一验收记录](./baigong-040-replay-validation-20261029.md)。
 
 本地队列默认同时派发 16 项，恢复最多使用 8 个执行槽；恢复就绪等待容量默认 16。`WORKFLOW_LOCAL_QUEUE_CONCURRENCY` 可配置总并发，`WORKFLOW_LOCAL_RECOVERY_BUFFER` 可独立配置恢复等待容量；均须为正安全整数。修改环境变量后重启进程生效。既有 `WORKFLOW_LOCAL_RECOVER_ACTIVE_RUNS=false` 仍关闭启动恢复。该默认值依据独立调度探针选定，生产模型及工具资源需按业务负载验收。
 
-## 2. 拟新增 eve 接口
+## 2. eve 新增接口
 
 `GET /eve/v1/session/:sessionId/status`：
 

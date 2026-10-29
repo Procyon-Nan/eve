@@ -6,7 +6,7 @@ last_updated: !!str 2026-10-29
 
 # eve 跨版本重放修复统一验收
 
-源码基线 `7ff2cf5c5131374af9cfaa1594327ed73630bcc6`，本文件记录其后的验收修正。版本仍为 `0.40.0-baigong.3`，尚未发布 `.4`。验证环境为 WSL2 Linux 6.18.40.1、Node 24.21.0，28 个逻辑 CPU、15818 MiB 内存。Agent/Apps 源码与生产数据未修改。
+功能验收提交 `96606a25`，此前 E05 提交为 `7ff2cf5c`。版本已准备为 `0.40.0-baigong.4`，正式包隔离验收已完成，发布状态以 Release 为准。验证环境为 WSL2 Linux 6.18.40.1、Node 24.21.0，28 个逻辑 CPU、15818 MiB 内存。Agent/Apps 源码与生产数据未修改。
 
 ## 进度
 
@@ -20,7 +20,8 @@ last_updated: !!str 2026-10-29
 - [x] 574 个运行、两次启动、三组并发的独立调度测量。
 - [x] 最后一批修正的构建、类型及 lint 复核。
 - [x] 子代理取消测试补齐 sandbox 替身后，整组 9 项通过；与主 Workflow 的 21 项合计 30 项集成测试通过。
-- [ ] 最终 `.4` tgz 安装、CLI、跨版本复核与发布。
+- [x] 最终 `.4` tgz 隔离安装、CLI、跨版本复核。
+- [ ] 签名版本提交、标签及 GitHub Release 发布。
 - [ ] Agent/Apps 接入及生产业务验收，由配套交付文档负责。
 
 ## 实际存储与回归
@@ -56,7 +57,7 @@ node scripts/baigong/replay-compatibility-probe.mjs replay \
   /absolute/new-package/dist/src/compiled /tmp/eve-replay-data 0.40.0-baigong.2
 ```
 
-另用独立目录对 `.3` 执行相同流程。record 由真实旧构建 core/world 执行带旧版本身份的 `createSessionStep`，保存结果后停在 Hook；replay 使用当前稳定身份，恢复 Hook 后执行 `dispatchTurnStep`。两个版本均得到：record 首步骤调用 1 次；replay 首步骤调用 0 次、后续步骤调用 1 次；保留历史输出并最终 completed。这验证真实 core 的步骤重放和恢复，不等同于完整 Agent 多轮业务验收。正式 `.4` 包仍须重复该检查。
+另用独立目录对 `.3` 执行相同流程。record 由真实旧构建 core/world 执行带旧版本身份的 `createSessionStep`，保存结果后停在 Hook；replay 使用当前稳定身份，恢复 Hook 后执行 `dispatchTurnStep`。两个版本均得到：record 首步骤调用 1 次；replay 首步骤调用 0 次、后续步骤调用 1 次；保留历史输出并最终 completed。这验证真实 core 的步骤重放和恢复，不等同于完整 Agent 多轮业务验收。正式 `.4` 包已在隔离安装后重复该检查，两个版本均通过。
 
 ## 恢复调度测量
 
@@ -79,4 +80,12 @@ WORKFLOW_LOCAL_QUEUE_CONCURRENCY=16 WORKFLOW_LOCAL_RECOVERY_BUFFER=16 \
 
 ## 未覆盖边界
 
-尚未完成正式版本提交与不可变 tgz 复核、真实 VM、Agent/Apps 接入及生产资源对照。测试通过不代表这些外部验收完成，生产数据修复与切换仍需另行授权。
+尚未完成正式版本签名提交与发布、真实 VM、Agent/Apps 接入及生产资源对照。测试通过不代表这些外部验收完成，生产数据修复与切换仍需另行授权。
+
+## 正式 tgz 隔离验收
+
+制品 `.output/baigong-0.40.0-baigong.4/eve-0.40.0-baigong.4.tgz`，SHA256 `ef731869aaa370b326f1dd29039ba92b3726383249150f18f54f6edf4a63ba84`。3,335 个 dist 文件与构建逐文件相同；npm 隔离安装使用 `--ignore-scripts --no-audit --no-fund`，3,439 个安装文件与 tgz 逐文件相同。CLI 输出 `.4`。
+
+随附 `verify-installed.mjs` 验证 20 次流取消后无轮询遗留、reader 解锁及持久块顺序/EOF。`verify-repair-cli.mjs` 从安装包调用实际 CLI，验证 status/inspect 零写入，apply 未确认停写时拒绝执行，确认后取消关联 turn、关闭流、保留 failed 状态且可幂等重跑。两项脚本、`.2/.3` 独立进程重放和默认 C/B=16 的 574 运行探针全部退出 0。
+
+正式包两次恢复各 574 项，最大并行 8；耗时 649/549ms，普通请求 78/7ms，关闭 47/43ms。该结果仍仅代表模拟 handler 的调度成本。
