@@ -153,3 +153,5 @@ export {
 } from "#runtime/input/types.js";
 
 export { resolveTextToResponse, resolveTextToResponses } from "#channel/resolve-text.js";
+
+export type { SessionExecutionStatus } from "#protocol/session-status.js";

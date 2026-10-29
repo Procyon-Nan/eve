@@ -228,6 +228,7 @@ function createNoopRuntime(): Runtime {
     getEventStream: vi
       .fn()
       .mockRejectedValue(new Error("runtime.getEventStream should not be called in this test")),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi
       .fn()
       .mockRejectedValue(new Error("runtime.getStreamTailIndex should not be called in this test")),

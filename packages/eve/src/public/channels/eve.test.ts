@@ -101,6 +101,7 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
     async getEventStream() {
       return new ReadableStream();
     },
+    getExecutionStatus: vi.fn(),
     async getStreamTailIndex() {
       return -1;
     },
@@ -241,6 +242,7 @@ function createEveContinueDispatchHandler(input: EveChannelInput) {
     dispatchContinuation: vi.fn(),
     dispatchSession: async (dispatchInput) => (await dispatchSession(dispatchInput)) as never,
     getEventStream: vi.fn(),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi.fn(),
     resolveContinuation: vi.fn(),
   } satisfies Runtime;

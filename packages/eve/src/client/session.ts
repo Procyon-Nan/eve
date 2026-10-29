@@ -1,6 +1,11 @@
+import type { SessionExecutionStatus } from "#protocol/session-status.js";
 import type { MessageStreamEvent } from "#protocol/message.js";
 import { EVE_SESSION_ID_HEADER, isCurrentTurnBoundaryEvent } from "#protocol/message.js";
-import { EVE_SESSION_ROUTE_PATH, createEveSessionRoutePath } from "#protocol/routes.js";
+import {
+  EVE_SESSION_ROUTE_PATH,
+  createEveSessionRoutePath,
+  createEveSessionStatusRoutePath,
+} from "#protocol/routes.js";
 import { ClientError } from "#client/client-error.js";
 import { MessageResponse } from "#client/message-response.js";
 import { followStreamIterable } from "#client/open-stream.js";
@@ -67,6 +72,20 @@ export class ClientSession {
   /** Current fixed session identity and durable stream cursor. */
   get state(): ClientSessionState {
     return this.#state;
+  }
+
+  /** Reads persisted execution state without advancing this handle's stream cursor. */
+  async getExecutionStatus(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<SessionExecutionStatus> {
+    const headers = await this.#context.resolveHeaders();
+    const response = await fetch(
+      createClientUrl(this.#context.host, createEveSessionStatusRoutePath(this.#state.sessionId)),
+      { headers, signal: options?.signal, redirect: this.#context.redirect },
+    );
+    if (!response.ok)
+      throw new ClientError(response.status, await response.text(), response.headers);
+    return (await response.json()) as SessionExecutionStatus;
   }
 
   /** Reads a finite prefix through the durable tail without advancing this handle. */

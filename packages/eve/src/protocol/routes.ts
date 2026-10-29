@@ -189,3 +189,10 @@ export function createEveCallbackRoutePath(token: string): string {
 export function createEveTaskInputRoutePath(token: string): string {
   return `${EVE_ROUTE_PREFIX}/task-input/${encodeURIComponent(token)}`;
 }
+
+/** Read-only persisted execution status for one exact session ID. */
+export const EVE_SESSION_STATUS_ROUTE_PATTERN = `${EVE_SESSION_ROUTE_PATH}/:sessionId/status`;
+
+export function createEveSessionStatusRoutePath(sessionId: string): string {
+  return `${EVE_SESSION_ROUTE_PATH}/${encodeURIComponent(sessionId)}/status`;
+}

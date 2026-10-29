@@ -1,3 +1,4 @@
+import { WorkflowRunNotFoundError } from "#compiled/@workflow/errors/index.js";
 import { type FilePart, type TextPart, type UserContent } from "ai";
 
 import type {
@@ -49,6 +50,7 @@ import {
   EVE_SESSION_ROUTE_PATTERN,
   EVE_SESSION_RESET_ROUTE_PATTERN,
   EVE_SESSION_STREAM_ROUTE_PATTERN,
+  EVE_SESSION_STATUS_ROUTE_PATTERN,
   EVE_SUBAGENT_STREAM_ROUTE_PATTERN,
   createEveSessionStreamRoutePath,
   createEveSubagentStreamRoutePath,
@@ -639,6 +641,30 @@ export function eveChannel(input: EveChannelInput): EveChannel {
             : ({ ok: true, status: "no_active_session" } satisfies ResetResponse),
           { headers: { "cache-control": "no-store" } },
         );
+      }),
+
+      GET(EVE_SESSION_STATUS_ROUTE_PATTERN, async (req, { attachSession, params }) => {
+        const authResult = await routeAuth(req, input.auth);
+        if (authResult instanceof Response) return authResult;
+        const sessionId = requireSessionId(params);
+        if (sessionId instanceof Response) return sessionId;
+        try {
+          return Response.json(await attachSession(sessionId).getExecutionStatus(), {
+            headers: { "cache-control": "no-store" },
+          });
+        } catch (error) {
+          if (WorkflowRunNotFoundError.is(error)) {
+            return Response.json(
+              { error: "Session not found.", ok: false },
+              { status: 404, headers: { "cache-control": "no-store" } },
+            );
+          }
+          const errorId = logError(log, "session-status request failed", error, { sessionId });
+          return Response.json(
+            { error: "Failed to read session status.", errorId, ok: false },
+            { status: 500, headers: { "cache-control": "no-store" } },
+          );
+        }
       }),
 
       GET(EVE_SESSION_STREAM_ROUTE_PATTERN, async (req, { attachSession, params }) => {

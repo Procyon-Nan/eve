@@ -1,3 +1,4 @@
+import type { SessionExecutionStatus } from "#protocol/session-status.js";
 import type { ContextAccessor } from "#context/key.js";
 import {
   createChannelDeliveryMetadata,
@@ -50,6 +51,8 @@ export interface Session {
   reset(options?: { reason?: string }): Promise<ResetSessionResult>;
   getEventStream(options?: { startIndex?: number }): Promise<ReadableStream<MessageStreamEvent>>;
   getStreamTailIndex(): Promise<number>;
+  /** Reads persisted execution state without advancing the event stream. */
+  getExecutionStatus(): Promise<SessionExecutionStatus>;
 }
 
 interface SessionDeliveryOptions {
@@ -186,6 +189,9 @@ export function createSession(
     },
     async getEventStream(options?: { startIndex?: number }) {
       return runtime.getEventStream(id, options);
+    },
+    async getExecutionStatus() {
+      return runtime.getExecutionStatus(id);
     },
     async getStreamTailIndex() {
       return runtime.getStreamTailIndex(id);

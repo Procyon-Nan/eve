@@ -65,6 +65,14 @@ const { session: fresh, response } = await client.sessions.create({ message: "Be
 
 The old `session` remains pinned to its retired ID; `fresh` owns a different ID.
 
+## Read persisted execution status
+
+Use `await session.getExecutionStatus({ signal })` to read the exact session's durable Workflow state without opening its message stream or advancing its cursor. The result contains `sessionId`, `executionStatus` (`pending`, `running`, `completed`, `failed`, or `cancelled`), `finishedAt` (an ISO timestamp or `null`), and `errorCode` (a code or `null`).
+
+The HTTP endpoint is `GET /eve/v1/session/:sessionId/status`. It uses the channel's session-route authentication and returns `Cache-Control: no-store`. A missing Run returns 404; a storage failure returns 500. Error details, inputs, and outputs are not included.
+
+A failed Workflow can have message history without a final `session.failed` event. Read the status separately when presenting that history. The endpoint does not repair or restart a failed session and does not append stream events.
+
 ## Multiple sessions
 
 Create one handle per conversation:

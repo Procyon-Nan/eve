@@ -12,6 +12,7 @@ function createRuntime(): Runtime {
     }),
     dispatchSession: vi.fn(),
     getEventStream: vi.fn(),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi.fn(),
     resolveContinuation: vi.fn(),
   };

@@ -16,6 +16,7 @@ function makeRuntime(): Runtime {
     dispatchContinuation: vi.fn(),
     dispatchSession: vi.fn(),
     getEventStream: vi.fn(),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi.fn(),
     resolveContinuation: vi.fn(),
   };

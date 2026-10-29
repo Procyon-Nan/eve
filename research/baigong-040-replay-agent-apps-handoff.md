@@ -91,3 +91,5 @@ Agent 已有 eve-stream token 增加同 session 的 STATUS 只读权限；run/co
 | H10 | Apps OpenSpec、所需测试/构建/覆盖率及三方联调完成             | [ ]  | —    |
 
 回执须填写实际 SHA、命令、制品、时间和输出位置；不得仅填“已检查”。正式交付时补充版本、下载 URL、SHA256、最终配置参数和真实维护命令。
+
+E04a 接口已实现：`GET /eve/v1/session/:sessionId/status`；客户端为 `client.sessions.attach(sessionId).getExecutionStatus({ signal })`。返回四个字段：sessionId、executionStatus、finishedAt、errorCode。接口不读取或修改消息流，404 仅表示 Run 不存在，存储读取错误返回 500。尚未完成统一构建与运行验收；Agent 的该路由授权仍需按本文接入。

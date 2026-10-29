@@ -244,6 +244,17 @@ export function createWorkflowRuntime(config: {
       );
     },
 
+    async getExecutionStatus(sessionId: string) {
+      const world = await getWorld();
+      const run = await world.runs.get(sessionId, { resolveData: "none" });
+      return {
+        sessionId,
+        executionStatus: run.status,
+        finishedAt: run.completedAt?.toISOString() ?? null,
+        errorCode: run.errorCode ?? null,
+      };
+    },
+
     async getStreamTailIndex(sessionId: string): Promise<number> {
       const world = await getWorld();
       const info = await world.streams.getInfo(sessionId, getWorkflowRunStreamId(sessionId));

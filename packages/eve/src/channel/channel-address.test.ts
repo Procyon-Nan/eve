@@ -9,6 +9,7 @@ function createRuntime(): Runtime {
     dispatchContinuation: vi.fn().mockResolvedValue({ sessionId: "sess_1", status: "accepted" }),
     dispatchSession: vi.fn(),
     getEventStream: vi.fn(),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi.fn(),
     resolveContinuation: vi.fn(),
   };

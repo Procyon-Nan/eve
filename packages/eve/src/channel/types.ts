@@ -1,3 +1,4 @@
+import type { SessionExecutionStatus } from "#protocol/session-status.js";
 import type { UserContent } from "ai";
 
 import type { MessageStreamEvent, UnstampedMessageStreamEvent } from "#protocol/message.js";
@@ -602,6 +603,9 @@ export interface Runtime {
    * live stream.
    */
   getStreamTailIndex(sessionId: string): Promise<number>;
+
+  /** Reads persisted execution state without consuming or modifying the stream. */
+  getExecutionStatus(sessionId: string): Promise<SessionExecutionStatus>;
 }
 
 /**

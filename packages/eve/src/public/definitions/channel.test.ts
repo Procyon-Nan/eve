@@ -596,6 +596,7 @@ describe("defineChannel", () => {
           async getEventStream() {
             return new ReadableStream();
           },
+          getExecutionStatus: vi.fn(),
           async getStreamTailIndex() {
             return -1;
           },

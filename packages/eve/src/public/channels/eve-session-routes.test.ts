@@ -1,3 +1,4 @@
+import { WorkflowRunNotFoundError } from "#compiled/@workflow/errors/index.js";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RouteHandlerArgs } from "#channel/routes.js";
@@ -25,6 +26,7 @@ function createFixedSession(overrides: Partial<Session> = {}): Session {
     clear: vi.fn().mockResolvedValue({ sessionId: "wrun_A", status: "accepted" }),
     reset: vi.fn().mockResolvedValue({ previousSessionId: "wrun_A", status: "reset" }),
     getEventStream: vi.fn().mockResolvedValue(new ReadableStream()),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi.fn().mockResolvedValue(-1),
     ...overrides,
   };
@@ -251,5 +253,39 @@ describe("eve ID-addressed session routes", () => {
 
     expect(response.status).toBe(400);
     expect(session[operation]).not.toHaveBeenCalled();
+  });
+});
+
+describe("session execution status", () => {
+  it("returns failed execution independently of the message stream", async () => {
+    const status = {
+      sessionId: "wrun_A",
+      executionStatus: "failed" as const,
+      finishedAt: "2026-10-28T00:00:00.000Z",
+      errorCode: "CORRUPTED_EVENT_LOG",
+    };
+    const session = createFixedSession({ getExecutionStatus: vi.fn().mockResolvedValue(status) });
+    const response = await route("GET", "/eve/v1/session/:sessionId/status")(
+      new Request("https://eve.test/eve/v1/session/wrun_A/status"),
+      createArgs(session),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual(status);
+    expect(session.getEventStream).not.toHaveBeenCalled();
+    expect(session.getStreamTailIndex).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new WorkflowRunNotFoundError("wrun_A"), 404],
+    [new Error("disk read failed"), 500],
+  ])("does not report storage errors as missing sessions", async (error, expected) => {
+    const session = createFixedSession({ getExecutionStatus: vi.fn().mockRejectedValue(error) });
+    const response = await route("GET", "/eve/v1/session/:sessionId/status")(
+      new Request("https://eve.test/eve/v1/session/wrun_A/status"),
+      createArgs(session),
+    );
+    expect(response.status).toBe(expected);
+    expect(await response.text()).not.toContain("disk read failed");
   });
 });

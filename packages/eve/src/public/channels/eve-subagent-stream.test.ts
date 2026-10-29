@@ -236,6 +236,7 @@ function createHarness(input: {
         },
       });
     },
+    getExecutionStatus: vi.fn(),
     async getStreamTailIndex() {
       return input.events.length - 1;
     },

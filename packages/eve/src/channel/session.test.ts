@@ -16,6 +16,7 @@ function createRuntime(): Runtime {
         status: "accepted",
       })),
     getEventStream: vi.fn(),
+    getExecutionStatus: vi.fn(),
     getStreamTailIndex: vi.fn(),
     resolveContinuation: vi.fn(),
   };
